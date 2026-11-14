@@ -1,0 +1,101 @@
+import { GENERATIONS, type Generation } from './parse';
+import { DEFAULT_APP_VERSION } from './settings';
+
+export const MIN_POLL_MINUTES = 5;
+export const DEFAULT_POLL_MINUTES = 5;
+export const MAX_POLL_MINUTES = 24 * 60;
+
+export interface ToyotaConfig {
+  username: string;
+  password: string;
+  /** Toyota OneApp public client key (X-API-KEY). Supplied by the user, never bundled. */
+  apiKey: string;
+  oneTimePasscode?: string;
+  /** Limit to one vehicle. Default: every vehicle on the account. */
+  vin?: string;
+  /** Override Toyota's reported generation (17CY, 17CYPLUS, 21MM, 24MM). */
+  generation?: Generation;
+  pollIntervalMinutes: number;
+  exposeOpenings: boolean;
+  exposeBattery: boolean;
+  remoteStartEnabled: boolean;
+  /** AppSync key, only needed for 24MM remote commands. */
+  graphqlApiKey?: string;
+  appVersion: string;
+}
+
+export interface ConfigResult {
+  config?: ToyotaConfig;
+  errors: string[];
+  warnings: string[];
+}
+
+function optString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined;
+}
+
+export function parseConfig(raw: Record<string, unknown>): ConfigResult {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  const username = optString(raw['username']);
+  const password = typeof raw['password'] === 'string' && raw['password'] !== '' ? raw['password'] : undefined;
+  const apiKey = optString(raw['apiKey']);
+  if (!username) {
+    errors.push('"username" (Toyota account email) is required.');
+  }
+  if (!password) {
+    errors.push('"password" is required.');
+  }
+  if (!apiKey) {
+    errors.push('"apiKey" (Toyota OneApp client key) is required. See the README for how to obtain it.');
+  }
+
+  let generation: Generation | undefined;
+  const rawGeneration = optString(raw['generation']);
+  if (rawGeneration) {
+    generation = GENERATIONS.find((g) => g === rawGeneration.toUpperCase());
+    if (!generation) {
+      errors.push(`"generation" must be one of ${GENERATIONS.join(', ')}.`);
+    }
+  }
+
+  let pollIntervalMinutes = DEFAULT_POLL_MINUTES;
+  if (raw['pollIntervalMinutes'] !== undefined) {
+    const n = Number(raw['pollIntervalMinutes']);
+    if (!Number.isFinite(n)) {
+      warnings.push(`"pollIntervalMinutes" is not a number; using ${DEFAULT_POLL_MINUTES}.`);
+    } else if (n < MIN_POLL_MINUTES) {
+      warnings.push(`"pollIntervalMinutes" below ${MIN_POLL_MINUTES} is not allowed; using ${MIN_POLL_MINUTES}.`);
+      pollIntervalMinutes = MIN_POLL_MINUTES;
+    } else {
+      pollIntervalMinutes = Math.min(Math.floor(n), MAX_POLL_MINUTES);
+    }
+  }
+
+  const remoteStart = raw['remoteStart'];
+  const remoteStartEnabled =
+    typeof remoteStart === 'object' && remoteStart !== null && (remoteStart as Record<string, unknown>)['enabled'] === true;
+
+  if (errors.length > 0 || !username || !password || !apiKey) {
+    return { errors, warnings };
+  }
+  return {
+    errors,
+    warnings,
+    config: {
+      username,
+      password,
+      apiKey,
+      oneTimePasscode: optString(raw['oneTimePasscode']),
+      vin: optString(raw['vin'])?.toUpperCase(),
+      generation,
+      pollIntervalMinutes,
+      exposeOpenings: raw['exposeOpenings'] !== false,
+      exposeBattery: raw['exposeBattery'] !== false,
+      remoteStartEnabled,
+      graphqlApiKey: optString(raw['graphqlApiKey']),
+      appVersion: optString(raw['appVersion']) ?? DEFAULT_APP_VERSION,
+    },
+  };
+}
