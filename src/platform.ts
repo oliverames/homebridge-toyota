@@ -1,0 +1,176 @@
+import { join } from 'node:path';
+import type { API, DynamicPlatformPlugin, Logging, PlatformAccessory, PlatformConfig } from 'homebridge';
+import { VehicleAccessory } from './accessory';
+import { classifyError, ToyotaVehicleApi } from './api';
+import { type ChallengeStore, type PendingChallenge, ToyotaAuth } from './auth';
+import { ToyotaClient } from './client';
+import { parseConfig, type ToyotaConfig } from './config';
+import { describe, VehicleController } from './controller';
+import type { Generation, VehicleSummary } from './parse';
+import { Poller, type PollOutcome } from './poller';
+import { FileStore, isSession, type Session } from './session';
+import { PLATFORM_NAME, PLUGIN_NAME } from './settings';
+
+const DEFAULT_GENERATION: Generation = '21MM';
+
+function isPending(value: unknown): value is PendingChallenge {
+  const v = value as Record<string, unknown> | null;
+  return typeof v === 'object' && v !== null && typeof v['username'] === 'string' && typeof v['savedAt'] === 'number' && typeof v['payload'] === 'object' && v['payload'] !== null;
+}
+
+const mask = (vin: string): string => `…${vin.slice(-4)}`;
+
+export class ToyotaPlatform implements DynamicPlatformPlugin {
+  private readonly cached = new Map<string, PlatformAccessory>();
+  private readonly controllers: VehicleController[] = [];
+  private readonly config?: ToyotaConfig;
+  private poller?: Poller;
+  private discovered = false;
+  private degraded = false;
+  private vehicleApi?: ToyotaVehicleApi;
+
+  constructor(
+    private readonly log: Logging,
+    rawConfig: PlatformConfig,
+    private readonly api: API,
+  ) {
+    const result = parseConfig(rawConfig as Record<string, unknown>);
+    result.warnings.forEach((w) => this.log.warn(w));
+    if (!result.config) {
+      result.errors.forEach((e) => this.log.error(e));
+      this.log.error('Toyota plugin is not configured; no accessories will be created.');
+      return;
+    }
+    this.config = result.config;
+    api.on('didFinishLaunching', () => this.start());
+    api.on('shutdown', () => this.poller?.stop());
+  }
+
+  configureAccessory(accessory: PlatformAccessory): void {
+    this.cached.set(accessory.UUID, accessory);
+  }
+
+  private start(): void {
+    const config = this.config;
+    if (!config) {
+      return;
+    }
+    try {
+      const dir = join(this.api.user.storagePath(), 'homebridge-toyota');
+      const sessions = new FileStore<Session>(join(dir, 'session.json'), isSession);
+      const challengeFile = new FileStore<PendingChallenge>(join(dir, 'pending-otp.json'), isPending);
+      const challenges: ChallengeStore = {
+        load: () => challengeFile.load(),
+        save: (c) => challengeFile.save(c),
+        clear: () => challengeFile.clear(),
+      };
+      const auth = new ToyotaAuth(fetch, challenges);
+      const client = new ToyotaClient(config, auth, sessions, fetch, this.log);
+      this.vehicleApi = new ToyotaVehicleApi(client);
+      this.poller = new Poller(() => this.tick(), config.pollIntervalMinutes * 60_000);
+      this.poller.start(0);
+    } catch (error) {
+      this.log.error(`Toyota plugin failed to start: ${describe(error)}`);
+    }
+  }
+
+  /** One scheduled cycle. Must never throw. */
+  private async tick(): Promise<PollOutcome> {
+    let outcome: PollOutcome = 'ok';
+    let message: string | undefined;
+    try {
+      if (!this.discovered) {
+        await this.discover();
+      }
+      for (const controller of this.controllers) {
+        const result = await controller.poll();
+        if (result !== 'ok' && (outcome === 'ok' || result === 'fatal' || result === 'rateLimited')) {
+          outcome = result;
+          message = controller.lastError;
+        }
+      }
+    } catch (error) {
+      outcome = classifyError(error);
+      message = describe(error);
+    }
+    this.report(outcome, message);
+    return outcome;
+  }
+
+  private report(outcome: PollOutcome, message: string | undefined): void {
+    if (outcome === 'ok') {
+      if (this.degraded) {
+        this.log.info('Toyota connected services are reachable again.');
+      }
+      this.degraded = false;
+      return;
+    }
+    if (outcome === 'fatal') {
+      this.log.error(`${message ?? 'Toyota sign-in needs attention.'} Polling is stopped until Homebridge restarts.`);
+    } else if (!this.degraded) {
+      this.log.warn(`Toyota update failed (${outcome}): ${message ?? 'unknown error'}. Retrying with backoff; further failures are logged at debug level.`);
+    } else {
+      this.log.debug(`Toyota update still failing (${outcome}): ${message ?? 'unknown error'}`);
+    }
+    this.degraded = true;
+  }
+
+  private async discover(): Promise<void> {
+    const config = this.config!;
+    const vehicles = (await this.vehicleApi!.listVehicles()).filter((v) => !config.vin || v.vin.toUpperCase() === config.vin);
+    if (vehicles.length === 0) {
+      this.log.warn(config.vin ? 'The configured VIN was not found on this Toyota account.' : 'No vehicles were found on this Toyota account.');
+      this.discovered = true;
+      return;
+    }
+    const seen = new Set<string>();
+    for (const vehicle of vehicles) {
+      seen.add(this.addVehicle(vehicle));
+    }
+    for (const [uuid, accessory] of this.cached) {
+      if (!seen.has(uuid)) {
+        this.log.info(`Removing accessory for a vehicle no longer on the account: ${accessory.displayName}`);
+        this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
+        this.cached.delete(uuid);
+      }
+    }
+    this.discovered = true;
+  }
+
+  private addVehicle(vehicle: VehicleSummary): string {
+    const config = this.config!;
+    const uuid = this.api.hap.uuid.generate(`toyota:${vehicle.vin.toUpperCase()}`);
+    let accessory = this.cached.get(uuid);
+    if (!accessory) {
+      accessory = new this.api.platformAccessory(vehicle.displayName, uuid);
+      this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
+      this.cached.set(uuid, accessory);
+      this.log.info(`Added ${vehicle.displayName} (${mask(vehicle.vin)}).`);
+    }
+    const generation = config.generation ?? vehicle.generation;
+    if (!generation) {
+      this.log.warn(`Toyota did not report a generation for ${vehicle.displayName}; assuming ${DEFAULT_GENERATION}. Set "generation" in the config if commands are rejected.`);
+    }
+    const subscriptions = vehicle.subscriptions.map((s) => `${s.name}: ${s.status ?? 'unknown'}`).join(', ') || 'none reported';
+    this.log.info(`${vehicle.displayName}: generation ${generation ?? DEFAULT_GENERATION}; remote capabilities [${vehicle.capabilities.join(', ') || 'none reported'}]; subscriptions: ${subscriptions}.`);
+
+    const options = { exposeOpenings: config.exposeOpenings, exposeBattery: config.exposeBattery, remoteStart: config.remoteStartEnabled };
+    const view = new VehicleAccessory(this.api, this.log, accessory, vehicle, options);
+    const controller = new VehicleController(
+      vehicle.vin,
+      generation ?? DEFAULT_GENERATION,
+      this.vehicleApi!,
+      { remoteStart: config.remoteStartEnabled, exposeBattery: config.exposeBattery, electricHint: looksElectric(vehicle) },
+      view,
+      this.log,
+    );
+    view.attach(controller);
+    this.controllers.push(controller);
+    return uuid;
+  }
+}
+
+function looksElectric(vehicle: VehicleSummary): boolean {
+  const record = vehicle.record as Record<string, unknown> | null;
+  return record?.['evVehicle'] === true;
+}

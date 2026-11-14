@@ -1,0 +1,115 @@
+{
+  "pluginAlias": "Toyota",
+  "pluginType": "platform",
+  "singular": true,
+  "headerDisplay": "Native HomeKit lock, door and window sensors, and EV battery for Toyota North America vehicles. Run this plugin in its own child bridge. Remote lock and start need an active Toyota Remote Connect subscription.",
+  "footerDisplay": "Credentials and the client key are stored in Homebridge's config.json. The Toyota session is stored separately in the Homebridge storage folder with owner-only permissions.",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "title": "Name",
+        "type": "string",
+        "default": "Toyota",
+        "required": true
+      },
+      "username": {
+        "title": "Toyota account email",
+        "type": "string",
+        "format": "email",
+        "required": true
+      },
+      "password": {
+        "title": "Toyota account password",
+        "type": "string",
+        "required": true,
+        "x-schema-form": { "type": "password" }
+      },
+      "apiKey": {
+        "title": "OneApp client key (X-API-KEY)",
+        "description": "Toyota's public client key for its OneApp. Toyota rotates it every few months; when every request starts failing with a 403 after sign-in succeeds, paste the new key here and restart. See the README.",
+        "type": "string",
+        "required": true,
+        "x-schema-form": { "type": "password" }
+      },
+      "oneTimePasscode": {
+        "title": "One-time passcode",
+        "description": "Only when Toyota asks for one. Start the plugin once so Toyota sends the code, enter it here, save, and restart within 10 minutes. Clear it afterwards.",
+        "type": "string"
+      },
+      "vin": {
+        "title": "VIN (optional)",
+        "description": "Expose only this vehicle. Leave empty for every vehicle on the account.",
+        "type": "string"
+      },
+      "generation": {
+        "title": "Connection generation (optional)",
+        "description": "Only set this if Toyota does not report one or commands are rejected. 21MM and 17CYPLUS use REST. 24MM needs the GraphQL key below. 17CY is the legacy API.",
+        "type": "string",
+        "enum": ["", "17CY", "17CYPLUS", "21MM", "24MM"]
+      },
+      "pollIntervalMinutes": {
+        "title": "Poll interval (minutes)",
+        "description": "How often Toyota's cached status is read. Minimum and default: 5. Failures back off automatically.",
+        "type": "integer",
+        "default": 5,
+        "minimum": 5,
+        "maximum": 1440
+      },
+      "exposeOpenings": {
+        "title": "Door, window, trunk and hood contact sensors",
+        "description": "One native contact sensor per opening the vehicle reports.",
+        "type": "boolean",
+        "default": true
+      },
+      "exposeBattery": {
+        "title": "EV battery",
+        "description": "Adds a Battery service only when the vehicle reports a high-voltage charge level. Gas tank level is never exposed.",
+        "type": "boolean",
+        "default": true
+      },
+      "remoteStart": {
+        "title": "Remote start",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "title": "Add a Remote Start switch",
+            "description": "Off by default. HomeKit has no remote-start type, so this is the plugin's single non-native service: a switch that starts or stops the engine (or climate on an EV). Starting a vehicle remotely from an automation is easy to trigger by accident.",
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "graphqlApiKey": {
+        "title": "AppSync key (24MM only)",
+        "description": "Needed only for remote commands on 24MM vehicles.",
+        "type": "string",
+        "x-schema-form": { "type": "password" }
+      },
+      "appVersion": {
+        "title": "OneApp version header (advanced)",
+        "description": "Sent as X-APPVERSION. Change only when Toyota starts rejecting the default.",
+        "type": "string"
+      }
+    }
+  },
+  "layout": [
+    "name",
+    "username",
+    "password",
+    "apiKey",
+    "oneTimePasscode",
+    {
+      "type": "fieldset",
+      "title": "Features",
+      "items": ["exposeOpenings", "exposeBattery", "remoteStart.enabled"]
+    },
+    {
+      "type": "fieldset",
+      "title": "Advanced",
+      "expandable": true,
+      "expanded": false,
+      "items": ["vin", "generation", "pollIntervalMinutes", "graphqlApiKey", "appVersion"]
+    }
+  ]
+}

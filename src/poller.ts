@@ -25,7 +25,8 @@ export function nextDelayMs({ baseMs, consecutiveFailures, rateLimited, jitter =
   return Math.round(delay * (1 + 0.1 * jitter));
 }
 
-export type PollOutcome = 'ok' | 'failed' | 'rateLimited';
+/** `fatal` stops polling until restart (bad credentials or a pending passcode: retrying would spam Toyota). */
+export type PollOutcome = 'ok' | 'failed' | 'rateLimited' | 'fatal';
 
 /** Self-rescheduling poll loop. The task must report its outcome and must never throw. */
 export class Poller {
@@ -70,6 +71,10 @@ export class Poller {
       outcome = await this.task();
     } catch {
       outcome = 'failed';
+    }
+    if (outcome === 'fatal') {
+      this.stopped = true;
+      return;
     }
     this.failures = outcome === 'ok' ? 0 : this.failures + 1;
     this.schedule(
