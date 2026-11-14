@@ -60,7 +60,7 @@ Run this plugin in its own child bridge so a Toyota outage or restart never touc
 | `username` | Yes | none | Toyota account email. |
 | `password` | Yes | none | Toyota account password. |
 | `apiKey` | Yes | none | OneApp public client key sent as `X-API-KEY`. Not bundled with the plugin. |
-| `oneTimePasscode` | No | none | Code Toyota texted during sign-in. See below. Clear it afterwards. |
+| `oneTimePasscode` | No | none | Fallback only. Prefer the Sign in button on the settings page. See below. Clear it afterwards. |
 | `vin` | No | all vehicles | Expose only this VIN. |
 | `generation` | No | reported by Toyota, else `21MM` | `17CY`, `17CYPLUS`, `21MM` or `24MM`. |
 | `pollIntervalMinutes` | No | `5` | Minimum 5. Backs off automatically on errors. |
@@ -74,15 +74,23 @@ Run this plugin in its own child bridge so a Toyota outage or restart never touc
 
 Toyota rotates the OneApp key every few months. The symptom is that sign-in works but every request returns `APIGW-403`, and the log says the client key has most likely been rotated. To get the new key, follow the `refresh-toyota-api-key` skill in `personal-plugins` (extract it from the OneApp APK), or copy it from RedLink's `ToyotaEndpointProfile.northAmerica`. Paste it into `apiKey` and restart the child bridge. No plugin release is needed.
 
-### One-time passcode
+### Signing in from the settings page
 
-If Toyota requires a code, the first start logs that a passcode was sent. Enter it in `oneTimePasscode`, save, and restart within 10 minutes. The plugin answers the saved challenge instead of starting a new login. Once a session is saved it refreshes silently.
+Toyota may email a one-time code the first time you sign in. Handle it without restarts:
+
+1. Open the plugin's settings in Homebridge, enter your email, password and client key, and click Save. Sign-in uses the saved settings.
+2. Click **Sign in / Send code**. Toyota emails a code.
+3. Enter the code and click **Verify**. The status line shows the account, the number of vehicles and when the session was last updated.
+
+Verifying writes `<Homebridge storage>/homebridge-toyota/session.json` (owner-only permissions), the same file the plugin uses. A running plugin picks up the new session on its next update or command, and resumes updates if it had paused for a sign-in problem (it checks every 30 seconds). No restart is needed. The code is held in memory by the settings page, so keep that page open between sending and verifying. A code is treated as valid for about 10 minutes; that limit is a conservative guess, not a measured Toyota timeout, so if Verify fails just click Sign in / Send code again. The page never shows your password, key, tokens or code.
+
+If the settings page is not available, use the fallback: start the plugin once so Toyota sends the code, enter it in `oneTimePasscode`, save, and restart within 10 minutes. Clear the field afterwards. Once a session is saved it refreshes silently.
 
 ## Behaviour and limits
 
 - Data is Toyota's cached report. The plugin never wakes the vehicle, so lock state can be hours old on a parked car. This protects the 12 V battery and Toyota's rate limits.
 - After a command the plugin reads status up to three times, 10 seconds apart. If the vehicle has not reported the change, HomeKit returns to the reported state and the log says why.
-- API failures are caught and logged. Polling backs off up to one hour, and a 429 waits at least 15 minutes. Wrong credentials or a pending passcode stop polling until restart.
+- API failures are caught and logged. Polling backs off up to one hour, and a 429 waits at least 15 minutes. Wrong credentials or a pending passcode pause polling until you sign in from the settings page or restart.
 - Tokens are saved in `<Homebridge storage>/homebridge-toyota/session.json` with owner-only permissions. Credentials and the key sit in `config.json` like any Homebridge plugin.
 - Not supported: location, fuel level, tire pressure, trips, climate temperature, hazards, horn and charging control. See [docs/design.md](docs/design.md) for why.
 - Nothing was verified against a live vehicle at the time of writing.
@@ -108,6 +116,10 @@ src/
   state.ts       Pure mapping to HomeKit values
   controller.ts  Poll and command logic per vehicle (no HomeKit imports)
   poller.ts      Backoff and the poll loop
+  ui.ts          Sign-in handlers for the settings page (homebridge-ui/server.js wraps them)
+homebridge-ui/
+  server.js      Custom settings UI server
+  public/index.html  Sign in / Send code, Verify and status line
   accessory.ts   HomeKit services
   platform.ts    Homebridge platform, discovery, accessory lifecycle
 ```

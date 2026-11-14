@@ -43,9 +43,21 @@ Refresh tokens are single use. The client therefore refreshes inside one in-flig
 
 ### One-time passcode
 
-Toyota may text a code on sign-in. A headless plugin cannot prompt, and a Homebridge config change requires a restart, which would normally start a new login and invalidate the code. So the pending ForgeRock challenge is saved to the plugin storage folder (owner-only permissions, passwords blanked) for 10 minutes. The flow is: start the plugin, receive the code, put it in `oneTimePasscode`, restart. The saved challenge is answered with the code instead of starting a new login. After the session is saved Toyota should not ask again until the saved refresh token dies. The 10 minute limit is a conservative guess, not a measured ForgeRock timeout.
+Toyota may email a code on sign-in. A config change needs a restart, and a restart starts a new login that invalidates the code, so the primary flow lives in the Homebridge custom settings UI (`homebridge-ui/`, built on `@homebridge/plugin-ui-utils`).
 
-Wrong credentials, a pending code or a rejected code stop polling until restart. Retrying would send more texts or risk locking the account.
+The UI server (`homebridge-ui/server.js`, logic in `src/ui.ts`) reads the saved `username`, `password` and `apiKey` from `config.json`, so secrets never travel to the browser. **Sign in / Send code** runs `ToyotaAuth.signIn` with an in-memory challenge store. When Toyota asks for a code, the redacted challenge stays in the UI server's memory and the page shows "code sent". **Verify** calls `signIn` again with the code, which answers the held challenge rather than starting a new login. On success the UI server writes the session through `FileStore` (the same `session.json`, mode 0600, atomic) and does one vehicle-list call to confirm the key and count vehicles. Responses are a fixed whitelist of fields (configured, signed in, account email, vehicle count, session file mtime, code pending and its assumed expiry, a message); no token, password, key or code is ever returned or logged. Unknown errors are replaced by a generic message.
+
+Handoff to the platform is the session file only:
+
+- `ToyotaClient` remembers the session file's mtime when it reads or writes it. Each `ensureSession` compares it, and a file written by someone else (the UI server) is reloaded. Refreshes by the client itself update the remembered mtime, so they are not mistaken for outside changes.
+- Wrong credentials and a pending or rejected code are `fatal` poll outcomes that stop the poller. The platform then checks `sessionFileChanged()` every 30 seconds (one `stat`) and restarts the poller with `start(0)` when a new session appears.
+- After a discovery the platform writes `status.json` (vehicle count and time, no secrets) next to the session so the status line can show a count without a Toyota call.
+
+The 10 minute limit on a held challenge (`CHALLENGE_TTL_MS`) is a conservative guess, not a measured ForgeRock timeout. The UI server keeps the challenge only in memory, so it dies with the settings page's server process; the user simply clicks Sign in / Send code again.
+
+Fallback: the `oneTimePasscode` config field and the on-disk challenge (`pending-otp.json`, owner-only, passwords blanked) still work as before: start the plugin, receive the code, put it in the field, restart. After the session is saved Toyota should not ask again until the saved refresh token dies.
+
+Wrong credentials, a pending code or a rejected code pause polling until a sign-in from the settings page or a restart. Retrying would send more codes or risk locking the account.
 
 ### Client key
 
@@ -55,7 +67,7 @@ Toyota's OneApp public client key (`X-API-KEY`) rotates every few months. It is 
 
 - Default and minimum interval is 5 minutes, configurable upward. One cycle reads cached status (one `GET`), plus EV status for the battery and engine or climate status when Remote Start is enabled. Reads return what Toyota last stored and do not contact the vehicle.
 - The plugin never calls `refresh-status`, `realtime-status` or the pre-wake mutation. RedLink's research (`docs/toyota-refresh-behavior-2026-11-02.md`) records that OneApp itself never schedules a background wake, and repeated wakes risk the 12 V battery and HTTP 429. Lock state is therefore as fresh as the vehicle's own last report, which can be hours old on a parked car. That is a known limit, not a bug.
-- Failures double the interval per consecutive failure, capped at one hour, plus up to 10% jitter. A 429 never retries sooner than 15 minutes. Sign-in problems stop polling.
+- Failures double the interval per consecutive failure, capped at one hour, plus up to 10% jitter. A 429 never retries sooner than 15 minutes. Sign-in problems pause polling until a new session is saved.
 - Endpoints Toyota refuses for a vehicle (403 or 404 on EV status or climate status) are parked for 12 hours, as RedLink does, so a gas vehicle or an EV without climate status does not burn requests.
 - Everything inside a poll or command is caught. A poll never throws, so an API failure cannot crash the child bridge. The first failure is logged at warn level, later ones at debug, and recovery is logged once.
 
@@ -76,12 +88,12 @@ Remote lock, unlock and start require an active Toyota Remote Connect subscripti
 ## Secrets
 
 - Credentials and the client key live only in Homebridge's `config.json`.
-- The session (tokens) is in `<storage>/homebridge-toyota/session.json`, mode 0600, written atomically. The OTP challenge file never contains a password.
+- The session (tokens) is in `<storage>/homebridge-toyota/session.json`, mode 0600, written atomically, by either the platform or the settings UI server. The OTP challenge file never contains a password. The settings UI reads credentials from `config.json` on the server and never sends them to the browser.
 - Logs contain no tokens, passwords, keys or full VINs (last four digits only).
 - Tests use synthetic payloads and mocked `fetch`. No test opens a network connection.
 
 ## Verification status
 
-Verified: parsing and mapping against synthetic payloads modelled on RedLink's test fixtures, token refresh and OTP flows against mocked responses, and HomeKit service creation against the real HAP library.
+Verified: parsing and mapping against synthetic payloads modelled on RedLink's test fixtures, token refresh and OTP flows against mocked responses, the settings UI handlers (send code, verify, rejected and expired codes, no secrets in responses, session file mode) against mocked fetch, the client reloading a session file written by another process, and HomeKit service creation against the real HAP library. The UI server also answered requests over IPC in a smoke run.
 
-Not verified (no live calls were allowed): Toyota's current responses, the OTP challenge persistence across a restart, ForgeRock challenge lifetime, command confirmation timing, 24MM GraphQL commands, and behaviour on any specific vehicle.
+Not verified (no live calls were allowed): Toyota's current responses, the settings page rendering inside Homebridge UI, the platform's 30 second resume timer against a real Homebridge, the OTP challenge persistence across a restart, ForgeRock challenge lifetime, command confirmation timing, 24MM GraphQL commands, and behaviour on any specific vehicle.
