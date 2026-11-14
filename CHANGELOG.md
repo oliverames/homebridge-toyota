@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0
+
+- Remote Start now prepares the vehicle first (issue #3), on by default; set `remoteStart.prepare` to `false` to start immediately. It reads status and refuses, with a logged reason, if a door, the hood or the hatch is open. Otherwise it locks unlocked doors, closes open windows and the moonroof where the vehicle reports the capability (`power-window-close`, `sunroof-close`), and locks an unlocked hatch (`trunk-lock`). Each step is skipped when already satisfied, confirmed from status like a lock, and a refused or unconfirmed step abandons the start and returns the switch to off.
+- The hatch or trunk lock token is now parsed for the trunk opening (door lock state still counts doors only).
+- When Toyota refuses a command with an error body that carries a reason, the log and error message now show that reason, with tokens, long opaque strings and VINs removed. Debug logging shows the header names and redacted body of each non-GET request.
+- `x-correlationId` is now an uppercase UUID, as RedLink sends it.
+- The `startClimate` request is pinned by a unit test against RedLink's request factory. That comparison found no difference in URL, headers or body, so the HTTP 400 on EV climate start from the 2026-11-14 live test is not explained by the request shape. See the notes in issue #3.
+
 ## 0.2.0
 
 - Added a Homebridge custom settings UI. **Sign in / Send code** starts the Toyota login with the saved email, password and client key, **Verify** completes it with the emailed code, and a status line shows the account, vehicle count and session age. No restart is needed (issue #2).

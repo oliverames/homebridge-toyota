@@ -78,6 +78,12 @@
             "description": "Off by default. HomeKit has no remote-start type, so this is the plugin's single non-native service: a switch that starts or stops the engine (or climate on an EV). Starting a vehicle remotely from an automation is easy to trigger by accident.",
             "type": "boolean",
             "default": false
+          },
+          "prepare": {
+            "title": "Prepare the vehicle before starting",
+            "description": "On by default. Before starting, read the status, refuse if a door, the hood or the hatch is open, lock the doors, close windows and the moonroof where the vehicle supports it, and lock the hatch, confirming each step. Turn off to start immediately.",
+            "type": "boolean",
+            "default": true
           }
         }
       },
@@ -103,7 +109,7 @@
     {
       "type": "fieldset",
       "title": "Features",
-      "items": ["exposeOpenings", "exposeBattery", "remoteStart.enabled"]
+      "items": ["exposeOpenings", "exposeBattery", "remoteStart.enabled", "remoteStart.prepare"]
     },
     {
       "type": "fieldset",

@@ -19,6 +19,8 @@ export interface ToyotaConfig {
   exposeOpenings: boolean;
   exposeBattery: boolean;
   remoteStartEnabled: boolean;
+  /** Lock, close and check the vehicle before Remote Start. On unless `remoteStart.prepare` is false. */
+  remoteStartPrepare: boolean;
   /** AppSync key, only needed for 24MM remote commands. */
   graphqlApiKey?: string;
   appVersion: string;
@@ -77,6 +79,9 @@ export function parseConfig(raw: Record<string, unknown>): ConfigResult {
   const remoteStartEnabled =
     typeof remoteStart === 'object' && remoteStart !== null && (remoteStart as Record<string, unknown>)['enabled'] === true;
 
+  const remoteStartPrepare =
+    !(typeof remoteStart === 'object' && remoteStart !== null) || (remoteStart as Record<string, unknown>)['prepare'] !== false;
+
   if (errors.length > 0 || !username || !password || !apiKey) {
     return { errors, warnings };
   }
@@ -94,6 +99,7 @@ export function parseConfig(raw: Record<string, unknown>): ConfigResult {
       exposeOpenings: raw['exposeOpenings'] !== false,
       exposeBattery: raw['exposeBattery'] !== false,
       remoteStartEnabled,
+      remoteStartPrepare,
       graphqlApiKey: optString(raw['graphqlApiKey']),
       appVersion: optString(raw['appVersion']) ?? DEFAULT_APP_VERSION,
     },

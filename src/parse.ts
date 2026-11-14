@@ -196,7 +196,7 @@ export interface Opening {
   label: string;
   /** true = open/ajar, false = closed, null = not reported. */
   open: boolean | null;
-  /** true = locked, false = unlocked, null = not reported. Doors only. */
+  /** true = locked, false = unlocked, null = not reported. Doors and the trunk or hatch only. */
   locked: boolean | null;
 }
 
@@ -349,7 +349,8 @@ export function parseRemoteStatus(data: unknown): RemoteStatus {
     const label = section.name || section.group;
     const key = `${kind}:${slug(label)}`;
     const open = openState(section);
-    const locked = kind === 'door' ? lockState(section) : null;
+    // A hatch lock token is read for the Remote Start preparation only; doorsLocked still counts doors alone.
+    const locked = kind === 'door' || kind === 'trunk' ? lockState(section) : null;
     const existing = byKey.get(key);
     if (existing) {
       existing.open = mergeTri(existing.open, open, true);
@@ -430,4 +431,103 @@ export function parseEngineRunning(data: unknown): boolean | undefined {
 
 export function parseClimateRunning(data: unknown): boolean | undefined {
   return bool(at(data, 'isRunning')) ?? bool(at(data, 'running'));
+}
+
+/* -------------------------------------------------------------------------- */
+/* Remote capability matching (port of RedLink's word-run rules)               */
+/* -------------------------------------------------------------------------- */
+
+const NEGATION_WORDS = new Set(['no', 'non', 'not', 'without', 'unavailable']);
+
+/** Splits `doorLockUnlockCapable` into lowercase words on case and separator boundaries. */
+function capabilityWords(name: string): string[] {
+  const words: string[] = [];
+  let current = '';
+  let previous = '';
+  for (const character of name) {
+    if (!/[A-Za-z0-9]/.test(character)) {
+      if (current !== '') {
+        words.push(current);
+        current = '';
+      }
+      previous = '';
+      continue;
+    }
+    const upper = /[A-Z]/.test(character);
+    const lower = /[a-z]/.test(character);
+    if (previous !== '' && upper && /[a-z]/.test(previous) && current !== '') {
+      words.push(current);
+      current = '';
+    } else if (previous !== '' && lower && /[A-Z]/.test(previous) && current.length > 1) {
+      // "HVACControl" splits as HVAC + Control: the last uppercase letter starts the next word.
+      const leading = current.slice(-1);
+      words.push(current.slice(0, -1));
+      current = leading;
+    }
+    current += character.toLowerCase();
+    previous = character;
+  }
+  if (current !== '') {
+    words.push(current);
+  }
+  return words;
+}
+
+/** Every contiguous run of the name's words, concatenated, so `moonRoofCapable` yields `moonroof`. */
+function capabilityRuns(name: string): Set<string> {
+  const words = capabilityWords(name);
+  const runs = new Set<string>([name.toLowerCase().replace(/[^a-z0-9]/g, '')]);
+  for (let start = 0; start < words.length; start++) {
+    let run = '';
+    for (const word of words.slice(start)) {
+      run += word;
+      runs.add(run);
+    }
+  }
+  return runs;
+}
+
+/**
+ * True when a reported capability name matches one of the needles and is not a
+ * negated name (`noMoonroof`). Absent or unrecognized names are not support:
+ * RedLink keeps optional controls hidden until the vehicle proves them.
+ */
+export function hasRemoteCapability(capabilities: readonly string[], ...needles: string[]): boolean {
+  const wanted = needles.map((n) => n.toLowerCase().replace(/[^a-z0-9]/g, '')).filter((n) => n !== '');
+  let positive = false;
+  for (const name of capabilities) {
+    const runs = capabilityRuns(name);
+    if (!wanted.some((n) => runs.has(n))) {
+      continue;
+    }
+    if (!capabilityWords(name).some((w) => NEGATION_WORDS.has(w))) {
+      positive = true;
+    }
+  }
+  return positive;
+}
+
+export interface PrepareCapabilities {
+  closeWindows: boolean;
+  closeMoonroof: boolean;
+  lockTrunk: boolean;
+}
+
+/**
+ * Which Remote Start preparation commands this vehicle supports, gated as
+ * RedLink gates `power-window-close`, `sunroof-close` and `trunk-lock`:
+ * not on 17CY, and only when an enabled capability name matches.
+ */
+export function prepareCapabilities(vehicle: Pick<VehicleSummary, 'capabilities' | 'modelName' | 'nickname'>, generation: Generation): PrepareCapabilities {
+  if (generation === '17CY') {
+    return { closeWindows: false, closeMoonroof: false, lockTrunk: false };
+  }
+  const identity = `${vehicle.modelName ?? ''} ${vehicle.nickname ?? ''}`.toLowerCase().replace(/[^a-z0-9 ]/g, '');
+  // RedLink treats every bZ as having no remote moonroof command.
+  const bZ = identity.includes('bz');
+  return {
+    closeWindows: hasRemoteCapability(vehicle.capabilities, 'window'),
+    closeMoonroof: !bZ && hasRemoteCapability(vehicle.capabilities, 'sunroof', 'moonroof', 'moon_roof'),
+    lockTrunk: hasRemoteCapability(vehicle.capabilities, 'trunk', 'hatch', 'backdoor', 'back_door', 'tailgate', 'liftgate'),
+  };
 }

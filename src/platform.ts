@@ -6,7 +6,7 @@ import { type ChallengeStore, type PendingChallenge, ToyotaAuth } from './auth';
 import { ToyotaClient } from './client';
 import { parseConfig, type ToyotaConfig } from './config';
 import { describe, VehicleController } from './controller';
-import type { Generation, VehicleSummary } from './parse';
+import { type Generation, prepareCapabilities, type VehicleSummary } from './parse';
 import { Poller, type PollOutcome } from './poller';
 import { FileStore, isSession, type Session } from './session';
 import { PLATFORM_NAME, PLUGIN_NAME } from './settings';
@@ -204,7 +204,12 @@ export class ToyotaPlatform implements DynamicPlatformPlugin {
       vehicle.vin,
       generation ?? DEFAULT_GENERATION,
       this.vehicleApi!,
-      { remoteStart: config.remoteStartEnabled, exposeBattery: config.exposeBattery, electricHint: looksElectric(vehicle) },
+      {
+        remoteStart: config.remoteStartEnabled,
+        exposeBattery: config.exposeBattery,
+        electricHint: looksElectric(vehicle),
+        prepare: config.remoteStartEnabled && config.remoteStartPrepare ? prepareCapabilities(vehicle, generation ?? DEFAULT_GENERATION) : undefined,
+      },
       view,
       this.log,
     );

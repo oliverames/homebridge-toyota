@@ -23,6 +23,11 @@ describe('parseConfig', () => {
     expect(parseConfig({ ...base, remoteStart: { enabled: true } }).config?.remoteStartEnabled).toBe(true);
     expect(parseConfig({ ...base, remoteStart: {} }).config?.remoteStartEnabled).toBe(false);
   });
+  it('prepares the vehicle before Remote Start unless told not to', () => {
+    expect(parseConfig({ ...base, remoteStart: { enabled: true } }).config?.remoteStartPrepare).toBe(true);
+    expect(parseConfig(base).config?.remoteStartPrepare).toBe(true);
+    expect(parseConfig({ ...base, remoteStart: { enabled: true, prepare: false } }).config?.remoteStartPrepare).toBe(false);
+  });
   it('validates generation and normalizes VIN', () => {
     expect(parseConfig({ ...base, generation: 'bogus' }).errors).toHaveLength(1);
     const c = parseConfig({ ...base, generation: '24mm', vin: ' abc ' }).config!;

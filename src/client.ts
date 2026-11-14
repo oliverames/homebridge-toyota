@@ -1,7 +1,9 @@
 import { AuthHttpError, type FetchFn, type ToyotaAuth } from './auth';
 import type { ToyotaConfig } from './config';
 import { type Envelope, findRejection, parseEnvelope } from './envelope';
+import { isObject, str } from './json';
 import type { Generation } from './parse';
+import { redact } from './redact';
 import { FileStore, requiresRefresh, type Session } from './session';
 import { API_GATEWAY, GRAPHQL_ENDPOINT, SERVICES_GATEWAY } from './settings';
 
@@ -25,7 +27,7 @@ export class OperationRejectedError extends Error {
     readonly code: string | undefined,
     message: string | undefined,
   ) {
-    super(`Toyota rejected the request${code ? ` (${code})` : ''}: ${message ?? 'the vehicle did not accept it'}`);
+    super(`Toyota rejected the request${code ? ` (${redact(code)})` : ''}: ${message ? redact(message) : 'the vehicle did not accept it'}`);
   }
 }
 
@@ -40,19 +42,53 @@ export class ClientKeyRejectedError extends Error {
 
 export class UnsupportedError extends Error {}
 
-function detail(body: string): string {
+/** Pulls the first human-readable refusal reason out of an error body, as RedLink does. */
+export function refusalReason(body: string): string | undefined {
+  let parsed: unknown;
   try {
-    const parsed: unknown = JSON.parse(body);
-    if (typeof parsed === 'object' && parsed !== null) {
-      const message = (parsed as Record<string, unknown>)['message'] ?? (parsed as Record<string, unknown>)['description'];
-      if (typeof message === 'string' && message.trim() !== '') {
-        return `: ${message.trim().slice(0, 200)}`;
+    parsed = JSON.parse(body);
+  } catch {
+    return undefined;
+  }
+  const candidates: unknown[] = [];
+  const collect = (value: unknown): void => {
+    if (!isObject(value)) {
+      return;
+    }
+    candidates.push(value['message'], value['description'], value['detail'], value['reason'], value['errorMessage'], value['error_description']);
+    const errors = value['errors'];
+    if (Array.isArray(errors)) {
+      for (const entry of errors) {
+        if (isObject(entry)) {
+          candidates.push(entry['message'], entry['detailedDescription'], entry['description']);
+        }
       }
     }
-  } catch {
-    // not JSON
+    const status = value['status'];
+    if (isObject(status) && Array.isArray(status['messages'])) {
+      for (const entry of status['messages']) {
+        if (isObject(entry)) {
+          candidates.push(entry['detailedDescription'], entry['description']);
+        }
+      }
+    }
+  };
+  collect(parsed);
+  if (isObject(parsed)) {
+    collect(parsed['payload']);
   }
-  return '';
+  for (const candidate of candidates) {
+    const text = str(candidate);
+    if (text) {
+      return redact(text).slice(0, 300);
+    }
+  }
+  return undefined;
+}
+
+function detail(body: string): string {
+  const reason = refusalReason(body);
+  return reason ? `: ${reason}` : '';
 }
 
 export interface Route {
@@ -94,7 +130,8 @@ export function buildHeaders(ctx: RequestContext, route: Route): Record<string, 
     'x-generation': ctx.generation,
     generation: ctx.generation,
     // Some EV routes answer 500 without a correlation id; harmless elsewhere.
-    'x-correlationid': ctx.correlationId ?? crypto.randomUUID(),
+    // Uppercase, as the OneApp and RedLink (UUID().uuidString) send it.
+    'x-correlationid': ctx.correlationId ?? crypto.randomUUID().toUpperCase(),
   };
   for (const [key, value] of Object.entries(route.extraHeaders ?? {})) {
     headers[key.toLowerCase()] = value;
@@ -126,7 +163,11 @@ export const routes = {
   /** Lock/unlock/engine-start/engine-stop on every generation except 24MM (GraphQL). */
   remoteCommand: (command: RemoteCommand, g: Generation, session: Session, vin: string): Route => {
     if (g === '17CY') {
-      const [code, value] = LEGACY_CODES[command];
+      const legacy = LEGACY_CODES[command];
+      if (!legacy) {
+        throw new UnsupportedError(`${command} is not available on 17CY vehicles.`);
+      }
+      const [code, value] = legacy;
       return {
         method: 'POST',
         path: 'v1/legacy/remote/command',
@@ -149,9 +190,17 @@ export const routes = {
   }),
 };
 
-export type RemoteCommand = 'door-lock' | 'door-unlock' | 'engine-start' | 'engine-stop';
+export type RemoteCommand =
+  | 'door-lock'
+  | 'door-unlock'
+  | 'engine-start'
+  | 'engine-stop'
+  | 'power-window-close'
+  | 'sunroof-close'
+  | 'trunk-lock';
 
-const LEGACY_CODES: Record<RemoteCommand, [string, number]> = {
+/** 17CY has no window, moonroof or hatch commands (RedLink lists them for 17CYPLUS, 21MM and 24MM only). */
+const LEGACY_CODES: Partial<Record<RemoteCommand, [string, number]>> = {
   'door-lock': ['DL', 1],
   'door-unlock': ['DL', 2],
   'engine-start': ['RES', 1],
@@ -270,18 +319,26 @@ export class ToyotaClient {
       { apiKey: this.config.apiKey, appVersion: this.config.appVersion, session, vin, generation },
       route,
     );
+    const body = route.body === undefined ? undefined : JSON.stringify(route.body);
+    if (route.method !== 'GET') {
+      // Header names and the redacted body only, so a refused command can be compared with RedLink's request.
+      this.log.debug(`${route.method} ${route.path} headers [${Object.keys(headers).sort().join(', ')}] body ${redact(body ?? '')}`);
+    }
     const response = await this.fetchFn(routeUrl(route), {
       method: route.method,
       headers,
-      body: route.body === undefined ? undefined : JSON.stringify(route.body),
+      body,
       signal: AbortSignal.timeout(route.method === 'GET' ? 20_000 : 60_000),
     });
-    return this.readEnvelope(response);
+    return this.readEnvelope(response, route);
   }
 
-  private async readEnvelope(response: Response): Promise<Envelope> {
+  private async readEnvelope(response: Response, route: Route): Promise<Envelope> {
     const text = await response.text();
     if (!response.ok) {
+      if (route.method !== 'GET') {
+        this.log.debug(`${route.method} ${route.path} answered HTTP ${response.status}: ${redact(text).slice(0, 500)}`);
+      }
       throw new ApiHttpError(response.status, text);
     }
     const envelope = parseEnvelope(text);

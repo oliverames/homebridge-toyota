@@ -20,6 +20,7 @@ describe('config.schema.json', () => {
     expect(p['pollIntervalMinutes']?.default).toBe(5);
     expect(p['pollIntervalMinutes']?.minimum).toBe(5);
     expect(p['remoteStart']?.properties?.['enabled']?.default).toBe(false);
+    expect(p['remoteStart']?.properties?.['prepare']?.default).toBe(true);
   });
   it('ships no key or credential defaults', () => {
     for (const key of ['username', 'password', 'apiKey', 'graphqlApiKey']) {

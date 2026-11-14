@@ -1,6 +1,6 @@
 import { ApiHttpError, ClientKeyRejectedError } from './client';
 import { classifyError, type VehicleApi, type VehicleCommand } from './api';
-import type { ElectricStatus, Generation, RemoteStatus } from './parse';
+import type { ElectricStatus, Generation, PrepareCapabilities, RemoteStatus } from './parse';
 import type { PollOutcome } from './poller';
 import { lockCommandConfirmed } from './state';
 
@@ -26,6 +26,8 @@ export interface ControllerLog {
 export interface ControllerOptions {
   remoteStart: boolean;
   exposeBattery: boolean;
+  /** When set, Remote Start first prepares the vehicle using the commands this vehicle supports. */
+  prepare?: PrepareCapabilities;
   /** Pauses between verification reads after a command. OneApp itself uses 3 x 10 s. */
   verifyDelaysMs?: number[];
   /** True when Toyota's vehicle record says the vehicle is an EV or plug-in hybrid. */
@@ -116,7 +118,10 @@ export class VehicleController {
 
   lastError?: string;
 
-  /** Sends a command, then re-reads cached status a bounded number of times to confirm. */
+  /**
+   * Sends a command, then re-reads cached status a bounded number of times to confirm.
+   * Remote Start first prepares the vehicle (see prepareForStart) when enabled.
+   */
   async command(command: VehicleCommand): Promise<void> {
     if (this.pending) {
       this.log.warn(`Ignoring ${command}: ${this.pending} is still in progress.`);
@@ -125,46 +130,141 @@ export class VehicleController {
     }
     this.pending = command;
     try {
-      try {
-        await this.api.sendCommand(command, this.vin, this.generation, this.electricLike);
-      } catch (error) {
-        this.log.warn(`${command} failed: ${describe(error)}`);
-        this.listener.commandFailed(command, describe(error));
-        return;
-      }
-      this.log.info(`${command} accepted by Toyota; waiting for the vehicle to report.`);
-      for (const delay of this.delays) {
-        await this.sleep(delay);
-        try {
-          if (isLockCommand(command)) {
-            this.state.status = await this.api.readStatus(this.vin, this.generation);
-          } else {
-            this.state.running = await this.api.readRunning(this.vin, this.generation, this.electricLike);
-          }
-        } catch (error) {
-          this.log.warn(`Could not confirm ${command}: ${describe(error)}`);
+      if (command === 'remoteStart' && this.options.prepare) {
+        const blocked = await this.prepareForStart(this.options.prepare);
+        if (blocked) {
+          this.log.warn(`Remote start was not sent: ${blocked}.`);
           this.pending = undefined;
           this.emit();
-          this.listener.commandFailed(command, describe(error));
-          return;
-        }
-        if (this.confirmed(command)) {
-          this.pending = undefined;
-          this.emit();
-          this.log.info(`${command} confirmed.`);
+          this.listener.commandFailed(command, blocked);
           return;
         }
       }
-      this.log.warn(`${command} was accepted but the vehicle has not reported the change yet; showing its last report.`);
-      this.pending = undefined;
-      this.emit();
-      this.listener.commandFailed(command, 'not confirmed by the vehicle yet');
+      const failure = await this.sendAndConfirm(command, true);
+      if (failure) {
+        this.listener.commandFailed(command, failure);
+      }
     } finally {
       this.pending = undefined;
     }
   }
 
+  /**
+   * Sends one command and confirms it from the vehicle's next reports (three
+   * reads, 10 seconds apart). Returns undefined when confirmed, else why not.
+   * `last` is true for the user's own command: it then ends the pending state
+   * before the final state is published so HomeKit settles on what was reported.
+   */
+  private async sendAndConfirm(command: VehicleCommand, last: boolean): Promise<string | undefined> {
+    try {
+      await this.api.sendCommand(command, this.vin, this.generation, this.electricLike);
+    } catch (error) {
+      this.log.warn(`${command} failed: ${describe(error)}`);
+      return describe(error);
+    }
+    this.log.info(`${command} accepted by Toyota; waiting for the vehicle to report.`);
+    const settle = (): void => {
+      if (last) {
+        this.pending = undefined;
+      }
+      this.emit();
+    };
+    for (const delay of this.delays) {
+      await this.sleep(delay);
+      try {
+        if (readsStatus(command)) {
+          this.state.status = await this.api.readStatus(this.vin, this.generation);
+        } else {
+          this.state.running = await this.api.readRunning(this.vin, this.generation, this.electricLike);
+        }
+      } catch (error) {
+        this.log.warn(`Could not confirm ${command}: ${describe(error)}`);
+        settle();
+        return describe(error);
+      }
+      if (this.confirmed(command)) {
+        settle();
+        this.log.info(`${command} confirmed.`);
+        return undefined;
+      }
+    }
+    this.log.warn(`${command} was accepted but the vehicle has not reported the change yet; showing its last report.`);
+    settle();
+    return 'not confirmed by the vehicle yet';
+  }
+
+  /**
+   * Makes the vehicle ready for Remote Start, one step at a time, each decided
+   * from a fresh status read and confirmed from the next one, so a step the
+   * vehicle already satisfies is skipped and a repeat run changes nothing.
+   * Returns undefined when it is safe to start, else the reason it is not.
+   */
+  private async prepareForStart(capabilities: PrepareCapabilities): Promise<string | undefined> {
+    try {
+      this.state.status = await this.api.readStatus(this.vin, this.generation);
+    } catch (error) {
+      return `could not read the vehicle status first (${describe(error)})`;
+    }
+    this.emit();
+
+    const steps: PrepareStep[] = [
+      {
+        label: 'lock the doors',
+        command: 'lock',
+        needed: (s) => s.doorsLocked === false,
+        supported: true,
+      },
+      {
+        label: 'close the windows',
+        command: 'closeWindows',
+        needed: (s) => s.openings.some((o) => o.kind === 'window' && o.open === true),
+        supported: capabilities.closeWindows,
+      },
+      {
+        label: 'close the moonroof',
+        command: 'closeMoonroof',
+        needed: (s) => s.openings.some((o) => o.kind === 'roof' && o.open === true),
+        supported: capabilities.closeMoonroof,
+      },
+      {
+        label: 'lock the hatch',
+        command: 'lockTrunk',
+        needed: (s) => s.openings.some((o) => o.kind === 'trunk' && o.locked === false),
+        supported: capabilities.lockTrunk,
+      },
+    ];
+
+    for (let index = 0; index <= steps.length; index++) {
+      const status = this.state.status;
+      if (!status) {
+        return 'the vehicle status is not available';
+      }
+      const open = status.openings.filter((o) => (o.kind === 'door' || o.kind === 'hood' || o.kind === 'trunk') && o.open === true);
+      if (open.length > 0) {
+        return `${open.map((o) => o.label).join(', ')} ${open.length === 1 ? 'is' : 'are'} open`;
+      }
+      const step = steps[index];
+      if (!step) {
+        return undefined;
+      }
+      if (!step.needed(status)) {
+        continue;
+      }
+      if (!step.supported) {
+        this.log.warn(`Remote start will go ahead, but this vehicle does not report a remote command to ${step.label}.`);
+        continue;
+      }
+      this.log.info(`Remote start: preparing the vehicle, step: ${step.label}.`);
+      const failure = await this.sendAndConfirm(step.command, false);
+      if (failure) {
+        return `could not ${step.label} first (${failure})`;
+      }
+    }
+    return undefined;
+  }
+
   private confirmed(command: VehicleCommand): boolean {
+    const openings = this.state.status?.openings ?? [];
     switch (command) {
       case 'lock':
         return lockCommandConfirmed(true, this.state.status?.doorsLocked ?? null);
@@ -174,6 +274,12 @@ export class VehicleController {
         return this.state.running === true;
       case 'remoteStop':
         return this.state.running === false;
+      case 'closeWindows':
+        return openings.every((o) => o.kind !== 'window' || o.open !== true);
+      case 'closeMoonroof':
+        return openings.every((o) => o.kind !== 'roof' || o.open !== true);
+      case 'lockTrunk':
+        return openings.every((o) => o.kind !== 'trunk' || o.locked !== false);
     }
   }
 
@@ -186,8 +292,16 @@ export class VehicleController {
   }
 }
 
-function isLockCommand(command: VehicleCommand): boolean {
-  return command === 'lock' || command === 'unlock';
+interface PrepareStep {
+  label: string;
+  command: VehicleCommand;
+  needed: (status: RemoteStatus) => boolean;
+  supported: boolean;
+}
+
+/** Everything but the engine and climate commands is confirmed from the status report. */
+function readsStatus(command: VehicleCommand): boolean {
+  return command !== 'remoteStart' && command !== 'remoteStop';
 }
 
 function isEndpointRefusal(error: unknown): boolean {

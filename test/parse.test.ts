@@ -6,7 +6,9 @@ import {
   parseElectricStatus,
   parseEngineRunning,
   parseRemoteStatus,
+  hasRemoteCapability,
   parseVehicleList,
+  prepareCapabilities,
   recognizesVehicleList,
 } from '../src/parse';
 import { electricCharging, electricIdle, remoteStatus, vehicleList } from './fixtures';
@@ -42,7 +44,7 @@ describe('remote status', () => {
     expect(s.openings.map((o) => [o.key, o.kind, o.open, o.locked])).toEqual([
       ['door:driver-side-door', 'door', false, true],
       ['door:passenger-side-door', 'door', false, true],
-      ['trunk:rear-hatch', 'trunk', false, null],
+      ['trunk:rear-hatch', 'trunk', false, true],
       ['window:driver-side-window', 'window', false, null],
       ['hood:hood', 'hood', false, null],
     ]);
@@ -69,9 +71,10 @@ describe('remote status', () => {
     const s = status({ vehicleStatus: [{ category: 'Rear Hatch', sections: [{ section: 'Rear Hatch', values: [{ value: 'unlocked' }, { value: 'open' }] }] }] });
     expect(s.openings[0]?.open).toBe(true);
   });
-  it('hatch/trunk are not counted as doors for lock state', () => {
+  it('hatch/trunk are not counted as doors for lock state, but their own lock token is read', () => {
     const s = status({ vehicleStatus: [{ category: 'Rear Hatch', sections: [{ section: 'Rear Hatch', values: [{ value: 'closed' }, { value: 'unlocked' }] }] }] });
     expect(s.doorsLocked).toBeNull();
+    expect(s.openings[0]).toMatchObject({ kind: 'trunk', open: false, locked: false });
   });
   it('empty and unrecognized payloads report nothing', () => {
     expect(status({})).toEqual({ openings: [], doorsLocked: null });
@@ -104,5 +107,30 @@ describe('engine and climate', () => {
     expect(parseEngineRunning({})).toBeUndefined();
     expect(parseClimateRunning({ isRunning: false })).toBe(false);
     expect(parseClimateRunning({})).toBeUndefined();
+  });
+});
+
+describe('remote capability matching', () => {
+  it('matches long-form names on word boundaries, as RedLink does', () => {
+    expect(hasRemoteCapability(['moonRoofCapable'], 'sunroof', 'moonroof')).toBe(true);
+    expect(hasRemoteCapability(['trunkLockUnlockCapable'], 'trunk', 'hatch')).toBe(true);
+    expect(hasRemoteCapability(['powerWindowCapable'], 'window')).toBe(true);
+    expect(hasRemoteCapability(['windowsomething'], 'window')).toBe(false);
+  });
+  it('treats a negated name and a missing name as unsupported', () => {
+    expect(hasRemoteCapability(['noMoonroof'], 'moonroof')).toBe(false);
+    expect(hasRemoteCapability(['doorLock'], 'window')).toBe(false);
+    expect(hasRemoteCapability([], 'window')).toBe(false);
+  });
+  it('gates the preparation commands on capabilities, generation and the bZ moonroof rule', () => {
+    const vehicle = { capabilities: ['powerWindowCapable', 'moonRoofCapable', 'trunkLockUnlockCapable'], modelName: 'Camry', nickname: undefined };
+    expect(prepareCapabilities(vehicle, '21MM')).toEqual({ closeWindows: true, closeMoonroof: true, lockTrunk: true });
+    expect(prepareCapabilities(vehicle, '17CY')).toEqual({ closeWindows: false, closeMoonroof: false, lockTrunk: false });
+    expect(prepareCapabilities({ ...vehicle, modelName: 'bZ Woodland' }, '21MM').closeMoonroof).toBe(false);
+    expect(prepareCapabilities({ capabilities: ['doorLock'], modelName: 'Camry', nickname: undefined }, '21MM')).toEqual({
+      closeWindows: false,
+      closeMoonroof: false,
+      lockTrunk: false,
+    });
   });
 });

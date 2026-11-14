@@ -177,7 +177,7 @@ describe('request building', () => {
     expect(h['x-brand']).toBe('T');
     expect(h['vin']).toBe(ctx.vin);
     expect(h['generation']).toBe('21MM');
-    expect(h['x-correlationid']).toMatch(/[0-9a-f-]{36}/);
+    expect(h['x-correlationid']).toMatch(/^[0-9A-F]{8}(-[0-9A-F]{4}){3}-[0-9A-F]{12}$/);
   });
   it('uses generation-specific routes', () => {
     expect(routeUrl(routes.status('21MM'))).toBe('https://onecdn.telematicsct.com/oneapi/v1/global/remote/status');

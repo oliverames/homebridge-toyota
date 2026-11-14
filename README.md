@@ -11,7 +11,7 @@ Unofficial and not affiliated with Toyota. Private repository, not published to 
 | Door locks | Lock Mechanism "Doors" | Real lock state. Unknown stays unknown. Lock and unlock send the remote command and confirm from the vehicle's next report. |
 | Doors, trunk or hatch, hood, windows, moonroof | One Contact Sensor each | Only for openings the vehicle reports a position for. |
 | EV charge level | Battery "EV Battery" | Only when Toyota reports a charge level. Includes low battery and charging. Gas level is never exposed. |
-| Remote start (opt-in) | Switch "Remote Start" | Off by default. The one non-native service, because HomeKit has no remote-start type. |
+| Remote start (opt-in) | Switch "Remote Start" | Off by default. The one non-native service, because HomeKit has no remote-start type. By default it prepares the vehicle first; see below. |
 
 The reasoning and the options that were rejected are in [docs/design.md](docs/design.md).
 
@@ -31,7 +31,7 @@ git clone https://github.com/oliverames/homebridge-toyota.git
 cd homebridge-toyota
 npm ci && npm run build && npm pack
 # then, where Homebridge runs:
-npm install -g ./homebridge-toyota-0.1.0.tgz
+npm install -g ./homebridge-toyota-0.3.0.tgz
 ```
 
 ## Configure
@@ -67,6 +67,7 @@ Run this plugin in its own child bridge so a Toyota outage or restart never touc
 | `exposeOpenings` | No | `true` | Contact sensors for doors, windows, trunk, hood and moonroof. |
 | `exposeBattery` | No | `true` | Battery service when a charge level is reported. |
 | `remoteStart.enabled` | No | `false` | Adds the Remote Start switch. |
+| `remoteStart.prepare` | No | `true` | Prepare the vehicle before starting (lock, close, check). Set to `false` to start immediately. |
 | `graphqlApiKey` | 24MM only | none | AppSync key for 24MM remote commands. |
 | `appVersion` | No | `3.5.0` | `X-APPVERSION` header. |
 
@@ -86,6 +87,18 @@ Verifying writes `<Homebridge storage>/homebridge-toyota/session.json` (owner-on
 
 If the settings page is not available, use the fallback: start the plugin once so Toyota sends the code, enter it in `oneTimePasscode`, save, and restart within 10 minutes. Clear the field afterwards. Once a session is saved it refreshes silently.
 
+## Remote Start preparation
+
+With the Remote Start switch enabled, turning it on first prepares the vehicle (turn this off with `remoteStart.prepare: false`). The steps are sequential and each one is skipped when the vehicle already satisfies it:
+
+1. Read the vehicle status. If any door, the hood or the hatch or trunk is physically open, nothing is sent. The log says which one, and the switch returns to off.
+2. If a door is unlocked, send `door-lock`.
+3. If a window is open and the vehicle reports a window capability, send `power-window-close`. Same for an open moonroof (`sunroof-close`, moonroof capability, never on a bZ). If the hatch or trunk reports an unlocked state and the vehicle reports a hatch or trunk capability, send `trunk-lock`. These three commands do not exist on 17CY. Without the capability the step is skipped with a log note and the start goes ahead.
+4. Each command is confirmed from the next status reads (up to three, 10 seconds apart, the same as a lock) before the next step. If a step is refused, errors, or does not take effect, the start is abandoned and the log gives the reason. A rate limit on a read also stops it rather than retrying.
+5. Then it starts the engine, or climate on an EV.
+
+This works from Toyota's last stored report. The plugin never wakes the vehicle, so on a car that has not reported recently the preparation may act on old information, and a start can wait on a slow report.
+
 ## Behaviour and limits
 
 - Data is Toyota's cached report. The plugin never wakes the vehicle, so lock state can be hours old on a parked car. This protects the 12 V battery and Toyota's rate limits.
@@ -93,6 +106,7 @@ If the settings page is not available, use the fallback: start the plugin once s
 - API failures are caught and logged. Polling backs off up to one hour, and a 429 waits at least 15 minutes. Wrong credentials or a pending passcode pause polling until you sign in from the settings page or restart.
 - Tokens are saved in `<Homebridge storage>/homebridge-toyota/session.json` with owner-only permissions. Credentials and the key sit in `config.json` like any Homebridge plugin.
 - Not supported: location, fuel level, tire pressure, trips, climate temperature, hazards, horn and charging control. See [docs/design.md](docs/design.md) for why.
+- When Toyota refuses a command, the log shows Toyota's own reason when its response includes one (secrets and VINs removed). Debug logging also shows the header names and body of each command sent.
 - Nothing was verified against a live vehicle at the time of writing.
 
 ## Development

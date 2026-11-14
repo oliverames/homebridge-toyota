@@ -17,7 +17,7 @@ const status = (locked: boolean | null, open = false): RemoteStatus => ({
   ],
 });
 
-function build(opts: { remoteStart?: boolean; exposeOpenings?: boolean; exposeBattery?: boolean } = {}) {
+function build(opts: { remoteStart?: boolean; exposeOpenings?: boolean; exposeBattery?: boolean; prepare?: boolean } = {}) {
   const api = new HomebridgeAPI() as unknown as API;
   const accessory = new api.platformAccessory('Test', api.hap.uuid.generate('x'));
   const view = new VehicleAccessory(api, log, accessory, vehicle, {
@@ -34,7 +34,7 @@ function build(opts: { remoteStart?: boolean; exposeOpenings?: boolean; exposeBa
     readRunning: async () => true,
     sendCommand: async (c) => { sent.push(c); },
   };
-  const controller = new VehicleController('V', '21MM', fake, { remoteStart: !!opts.remoteStart, exposeBattery: true, verifyDelaysMs: [0], sleep: async () => {} }, view, log);
+  const controller = new VehicleController('V', '21MM', fake, { remoteStart: !!opts.remoteStart, exposeBattery: true, prepare: opts.prepare ? { closeWindows: true, closeMoonroof: true, lockTrunk: true } : undefined, verifyDelaysMs: [0], sleep: async () => {} }, view, log);
   view.attach(controller);
   return { api, accessory, view, sent, setReads: (r: RemoteStatus[]) => { reads = r; } };
 }
@@ -106,5 +106,17 @@ describe('VehicleAccessory with real HAP services', () => {
     expect(on.accessory.getServiceById(on.api.hap.Service.Switch, 'remote-start')).toBeDefined();
     const off = build();
     expect(off.accessory.getServiceById(off.api.hap.Service.Switch, 'remote-start')).toBeUndefined();
+  });
+
+  it('a Remote Start refused because a door is open sends nothing and returns the switch to off', async () => {
+    const { api, accessory, sent, setReads } = build({ remoteStart: true, prepare: true });
+    const { Service: S, Characteristic: C } = api.hap;
+    const power = accessory.getServiceById(S.Switch, 'remote-start')!.getCharacteristic(C.On);
+    setReads([status(true, true)]);
+    power.handleSetRequest(true);
+    // Let the background command run its status read and abort.
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(power.value).toBe(false);
+    expect(sent).toEqual([]);
   });
 });
