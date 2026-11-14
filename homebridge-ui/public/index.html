@@ -1,0 +1,94 @@
+<div id="toyota-signin" class="card mb-3">
+  <div class="card-body">
+    <h5 class="card-title">Toyota sign-in</h5>
+    <p id="status" class="mb-2" role="status">Checking sign-in status...</p>
+    <p class="text-muted small mb-3">
+      Save your email, password and client key in the form below first. Sign-in uses the saved settings.
+    </p>
+    <button id="start" type="button" class="btn btn-primary">Sign in / Send code</button>
+    <div id="code-row" class="form-inline mt-3" hidden>
+      <label for="code" class="mr-2">Code from Toyota's email</label>
+      <input id="code" type="text" class="form-control mr-2" inputmode="numeric" autocomplete="one-time-code" maxlength="16" />
+      <button id="verify" type="button" class="btn btn-success">Verify</button>
+    </div>
+    <p id="note" class="small mt-3 mb-0"></p>
+  </div>
+</div>
+
+<script>
+  (function () {
+    var statusEl = document.getElementById('status');
+    var noteEl = document.getElementById('note');
+    var startBtn = document.getElementById('start');
+    var verifyBtn = document.getElementById('verify');
+    var codeRow = document.getElementById('code-row');
+    var codeInput = document.getElementById('code');
+
+    function ago(ms) {
+      var s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+      if (s < 90) return 'just now';
+      var m = Math.round(s / 60);
+      if (m < 90) return m + ' minutes ago';
+      var h = Math.round(m / 60);
+      if (h < 48) return h + ' hours ago';
+      return Math.round(h / 24) + ' days ago';
+    }
+
+    function render(s) {
+      var text;
+      if (s.signedIn) {
+        text = 'Signed in as ' + s.account;
+        if (typeof s.vehicleCount === 'number') {
+          text += ', ' + s.vehicleCount + (s.vehicleCount === 1 ? ' vehicle' : ' vehicles');
+        }
+        if (s.sessionUpdatedAt) text += ', session updated ' + ago(s.sessionUpdatedAt);
+        text += '.';
+      } else {
+        text = s.configured ? 'Not signed in.' : 'Not signed in. Save your Toyota settings first.';
+      }
+      if (s.codePending) {
+        var mins = Math.max(0, Math.round((s.codeExpiresAt - Date.now()) / 60000));
+        text += ' A code is waiting (about ' + mins + ' min left).';
+      }
+      statusEl.textContent = text;
+      codeRow.hidden = !s.codePending;
+      if (s.message) {
+        noteEl.textContent = s.message;
+        noteEl.className = 'small mt-3 mb-0 ' + (s.outcome === 'error' ? 'text-danger' : 'text-success');
+      }
+    }
+
+    function busy(on) {
+      startBtn.disabled = on;
+      verifyBtn.disabled = on;
+      homebridge[on ? 'showSpinner' : 'hideSpinner']();
+    }
+
+    async function call(path, payload) {
+      busy(true);
+      try {
+        render(await homebridge.request(path, payload));
+      } catch (e) {
+        noteEl.textContent = 'The request failed. Check the Homebridge log.';
+        noteEl.className = 'small mt-3 mb-0 text-danger';
+      } finally {
+        busy(false);
+      }
+    }
+
+    startBtn.addEventListener('click', function () { call('/start'); });
+    verifyBtn.addEventListener('click', function () {
+      var code = codeInput.value;
+      codeInput.value = '';
+      call('/verify', { code: code });
+    });
+    codeInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') verifyBtn.click();
+    });
+
+    homebridge.showSchemaForm();
+    homebridge.request('/status').then(render).catch(function () {
+      statusEl.textContent = 'Could not read sign-in status.';
+    });
+  })();
+</script>

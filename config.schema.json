@@ -2,6 +2,7 @@
   "pluginAlias": "Toyota",
   "pluginType": "platform",
   "singular": true,
+  "customUi": true,
   "headerDisplay": "Native HomeKit lock, door and window sensors, and EV battery for Toyota North America vehicles. Run this plugin in its own child bridge. Remote lock and start need an active Toyota Remote Connect subscription.",
   "footerDisplay": "Credentials and the client key are stored in Homebridge's config.json. The Toyota session is stored separately in the Homebridge storage folder with owner-only permissions.",
   "schema": {
@@ -33,8 +34,8 @@
         "x-schema-form": { "type": "password" }
       },
       "oneTimePasscode": {
-        "title": "One-time passcode",
-        "description": "Only when Toyota asks for one. Start the plugin once so Toyota sends the code, enter it here, save, and restart within 10 minutes. Clear it afterwards.",
+        "title": "One-time passcode (fallback)",
+        "description": "Normally leave empty and use Sign in / Send code at the top of this page. Only if that is unavailable: start the plugin once so Toyota sends the code, enter it here, save, and restart within 10 minutes. Clear it afterwards.",
         "type": "string"
       },
       "vin": {

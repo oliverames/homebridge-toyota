@@ -167,6 +167,8 @@ export interface ClientLogger {
 export class ToyotaClient {
   private session?: Session;
   private inflight?: Promise<Session>;
+  /** mtime of the session file as this client last read or wrote it. */
+  private seenMtime?: number;
 
   constructor(
     private readonly config: ToyotaConfig,
@@ -185,12 +187,24 @@ export class ToyotaClient {
     return this.inflight;
   }
 
+  /**
+   * True when the session file was written by someone else (the settings UI
+   * after a sign-in) since this client last read or wrote it.
+   */
+  sessionFileChanged(): boolean {
+    const mtime = this.store.mtimeMs();
+    return mtime !== undefined && mtime !== this.seenMtime;
+  }
+
   private async resolveSession(forceRefresh: boolean): Promise<Session> {
     let session = this.session;
-    if (!session) {
+    if (!session || this.sessionFileChanged()) {
+      const mtime = this.store.mtimeMs();
       const stored = this.store.load();
+      this.seenMtime = mtime;
       if (stored && stored.username.toLowerCase() === this.config.username.toLowerCase()) {
         session = stored;
+        this.session = stored;
       }
     }
     if (session && !forceRefresh && !requiresRefresh(session, this.now())) {
@@ -223,6 +237,7 @@ export class ToyotaClient {
     // Refresh tokens rotate on every use, so persist before anything else.
     try {
       this.store.save(session);
+      this.seenMtime = this.store.mtimeMs();
     } catch (error) {
       this.log.warn(`Could not save the Toyota session to disk: ${String(error)}`);
     }

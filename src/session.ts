@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 export interface Session {
@@ -55,6 +55,15 @@ export class FileStore<T> {
       }
       const parsed: unknown = JSON.parse(readFileSync(this.path, 'utf8'));
       return this.validate(parsed) ? parsed : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Last-modified time of the file, or undefined when it does not exist. A cheap change check. */
+  mtimeMs(): number | undefined {
+    try {
+      return statSync(this.path).mtimeMs;
     } catch {
       return undefined;
     }

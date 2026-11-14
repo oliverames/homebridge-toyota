@@ -25,7 +25,7 @@ export function nextDelayMs({ baseMs, consecutiveFailures, rateLimited, jitter =
   return Math.round(delay * (1 + 0.1 * jitter));
 }
 
-/** `fatal` stops polling until restart (bad credentials or a pending passcode: retrying would spam Toyota). */
+/** `fatal` stops polling until restarted, by Homebridge or by the platform when a new session appears (bad credentials or a pending passcode: retrying would spam Toyota). */
 export type PollOutcome = 'ok' | 'failed' | 'rateLimited' | 'fatal';
 
 /** Self-rescheduling poll loop. The task must report its outcome and must never throw. */
@@ -42,6 +42,7 @@ export class Poller {
 
   start(initialDelayMs = 0): void {
     this.stopped = false;
+    this.failures = 0;
     this.schedule(initialDelayMs);
   }
 

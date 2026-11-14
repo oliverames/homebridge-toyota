@@ -10,6 +10,7 @@ import type { Generation, VehicleSummary } from './parse';
 import { Poller, type PollOutcome } from './poller';
 import { FileStore, isSession, type Session } from './session';
 import { PLATFORM_NAME, PLUGIN_NAME } from './settings';
+import { isVehicleStatus, type VehicleStatus } from './ui';
 
 const DEFAULT_GENERATION: Generation = '21MM';
 
@@ -17,6 +18,8 @@ function isPending(value: unknown): value is PendingChallenge {
   const v = value as Record<string, unknown> | null;
   return typeof v === 'object' && v !== null && typeof v['username'] === 'string' && typeof v['savedAt'] === 'number' && typeof v['payload'] === 'object' && v['payload'] !== null;
 }
+
+const SESSION_WATCH_MS = 30_000;
 
 const mask = (vin: string): string => `…${vin.slice(-4)}`;
 
@@ -28,6 +31,9 @@ export class ToyotaPlatform implements DynamicPlatformPlugin {
   private discovered = false;
   private degraded = false;
   private vehicleApi?: ToyotaVehicleApi;
+  private client?: ToyotaClient;
+  private statusFile?: FileStore<VehicleStatus>;
+  private sessionWatch?: NodeJS.Timeout;
 
   constructor(
     private readonly log: Logging,
@@ -43,7 +49,10 @@ export class ToyotaPlatform implements DynamicPlatformPlugin {
     }
     this.config = result.config;
     api.on('didFinishLaunching', () => this.start());
-    api.on('shutdown', () => this.poller?.stop());
+    api.on('shutdown', () => {
+      this.poller?.stop();
+      this.stopSessionWatch();
+    });
   }
 
   configureAccessory(accessory: PlatformAccessory): void {
@@ -65,8 +74,9 @@ export class ToyotaPlatform implements DynamicPlatformPlugin {
         clear: () => challengeFile.clear(),
       };
       const auth = new ToyotaAuth(fetch, challenges);
-      const client = new ToyotaClient(config, auth, sessions, fetch, this.log);
-      this.vehicleApi = new ToyotaVehicleApi(client);
+      this.client = new ToyotaClient(config, auth, sessions, fetch, this.log);
+      this.statusFile = new FileStore<VehicleStatus>(join(dir, 'status.json'), isVehicleStatus);
+      this.vehicleApi = new ToyotaVehicleApi(this.client);
       this.poller = new Poller(() => this.tick(), config.pollIntervalMinutes * 60_000);
       this.poller.start(0);
     } catch (error) {
@@ -94,7 +104,36 @@ export class ToyotaPlatform implements DynamicPlatformPlugin {
       message = describe(error);
     }
     this.report(outcome, message);
+    if (outcome === 'fatal') {
+      this.watchForNewSession();
+    }
     return outcome;
+  }
+
+  /**
+   * After a sign-in problem the poller stops. The settings page can fix it by
+   * writing a new session file, so check for that cheaply and resume polling.
+   */
+  private watchForNewSession(): void {
+    if (this.sessionWatch || !this.client) {
+      return;
+    }
+    this.sessionWatch = setInterval(() => {
+      if (this.client?.sessionFileChanged()) {
+        this.stopSessionWatch();
+        this.log.info('A new Toyota sign-in was saved from the settings page; resuming updates.');
+        this.degraded = false;
+        this.poller?.start(0);
+      }
+    }, SESSION_WATCH_MS);
+    this.sessionWatch.unref();
+  }
+
+  private stopSessionWatch(): void {
+    if (this.sessionWatch) {
+      clearInterval(this.sessionWatch);
+      this.sessionWatch = undefined;
+    }
   }
 
   private report(outcome: PollOutcome, message: string | undefined): void {
@@ -106,7 +145,7 @@ export class ToyotaPlatform implements DynamicPlatformPlugin {
       return;
     }
     if (outcome === 'fatal') {
-      this.log.error(`${message ?? 'Toyota sign-in needs attention.'} Polling is stopped until Homebridge restarts.`);
+      this.log.error(`${message ?? 'Toyota sign-in needs attention.'} Polling is paused until you sign in from the plugin's settings page or restart Homebridge.`);
     } else if (!this.degraded) {
       this.log.warn(`Toyota update failed (${outcome}): ${message ?? 'unknown error'}. Retrying with backoff; further failures are logged at debug level.`);
     } else {
@@ -118,6 +157,11 @@ export class ToyotaPlatform implements DynamicPlatformPlugin {
   private async discover(): Promise<void> {
     const config = this.config!;
     const vehicles = (await this.vehicleApi!.listVehicles()).filter((v) => !config.vin || v.vin.toUpperCase() === config.vin);
+    try {
+      this.statusFile?.save({ vehicleCount: vehicles.length, checkedAt: Date.now() });
+    } catch {
+      // status is informational only
+    }
     if (vehicles.length === 0) {
       this.log.warn(config.vin ? 'The configured VIN was not found on this Toyota account.' : 'No vehicles were found on this Toyota account.');
       this.discovered = true;
