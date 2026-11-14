@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.2 - 2026-11-14
+
+- Public release under the MIT license, with a new README, an original icon, and a GitHub release tarball for installation.
+- Design notes now record what was verified against a live 21MM bZ and no longer reference private repositories.
+
 ## 0.3.1
 
 - Remote Start on 21MM EVs now uses `engine-start`/`engine-stop` on `v1/global/remote/command`, and confirms with engine status. Live test on 2026-11-14 (21MM bZ): `v2/electric/command` `startClimate` answered a bare HTTP 400 every time, while `engine-start` was accepted, engine status reported running within 20 seconds, and `engine-stop` stopped it. pytoyoda reports the same for the bZ4X. The EV climate route remains for 24MM EVs, where it is unverified.

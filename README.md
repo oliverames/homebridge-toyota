@@ -1,42 +1,65 @@
-# homebridge-toyota
+<p align="center">
+  <img src="assets/icon.svg" width="80" height="80" alt="Homebridge Toyota">
+</p>
 
-Private Homebridge platform plugin that exposes a Toyota North America vehicle to Apple HomeKit using native services only: a real door lock, contact sensors for doors, windows, trunk and hood, and the EV battery. It talks to Toyota's OneApp Connected Services API using the same client logic as [RedLink](https://github.com/oliverames/redlink), ported to TypeScript.
+<h1 align="center">Homebridge Toyota</h1>
 
-Unofficial and not affiliated with Toyota. Private repository, not published to npm.
+<p align="center">
+  <strong>Your Toyota in the Home app as a real lock, real sensors and a real battery, with no fake accessories.</strong>
+</p>
 
-## What it adds to HomeKit
+<p align="center">
+  <code>Toyota North America</code> &bull;
+  <code>17CY to 24MM vehicles</code> &bull;
+  <code>Homebridge 1.8 and 2.x</code> &bull;
+  <code>132 tests</code>
+</p>
 
-| Toyota data | HomeKit service | Notes |
-| --- | --- | --- |
-| Door locks | Lock Mechanism "Doors" | Real lock state. Unknown stays unknown. Lock and unlock send the remote command and confirm from the vehicle's next report. |
-| Doors, trunk or hatch, hood, windows, moonroof | One Contact Sensor each | Only for openings the vehicle reports a position for. |
-| EV charge level | Battery "EV Battery" | Only when Toyota reports a charge level. Includes low battery and charging. Gas level is never exposed. |
-| Remote start (opt-in) | Switch "Remote Start" | Off by default. The one non-native service, because HomeKit has no remote-start type. By default it prepares the vehicle first; see below. |
+<p align="center">
+  <a href="https://github.com/oliverames/homebridge-toyota/releases/latest">
+    <img src="https://img.shields.io/github/v/release/oliverames/homebridge-toyota?style=flat-square&color=f5a542" alt="Release">
+  </a>
+  <a href="https://github.com/oliverames/homebridge-toyota/actions/workflows/ci.yml">
+    <img src="https://img.shields.io/github/actions/workflow/status/oliverames/homebridge-toyota/ci.yml?branch=main&style=flat-square&color=f5a542&label=CI" alt="CI">
+  </a>
+  <a href="LICENSE">
+    <img src="https://img.shields.io/badge/license-MIT-f5a542?style=flat-square" alt="License">
+  </a>
+  <a href="https://www.buymeacoffee.com/oliverames">
+    <img src="https://img.shields.io/badge/Buy_Me_a_Coffee-support-f5a542?style=flat-square&logo=buy-me-a-coffee&logoColor=white" alt="Buy Me a Coffee">
+  </a>
+</p>
 
-The reasoning and the options that were rejected are in [docs/design.md](docs/design.md).
+---
 
-## Requirements
+Homebridge Toyota is a Homebridge platform plugin that puts a Toyota North America vehicle into Apple HomeKit using services HomeKit already understands: a lock for the doors, a contact sensor for each opening the car reports, and a battery for an EV. Ask Siri whether the car is locked, get a Home notification when the hatch is left open, or lock it from Control Center. It talks to Toyota's Connected Services API (the backend behind the Toyota app) and handles the emailed sign-in code from the Homebridge settings page.
 
-- Homebridge `^1.8.0 || ^2.0.0`, Node `^22 || ^24`.
-- A Toyota North America account with the vehicle linked.
-- A Toyota Remote Connect subscription for remote lock, unlock and start. Status-only use may work without one, which is unverified. The plugin logs the subscriptions Toyota reports at startup.
-- The current OneApp client key (see below).
+Unofficial. Not affiliated with, endorsed by, or supported by Toyota.
 
-## Install
+## Why this exists
 
-The repository is private, so install from a local checkout or a packed tarball, not npm:
+The Toyota app knows whether your doors are locked, but HomeKit doesn't, so the car sits outside every scene, automation and "is everything locked?" check you've built for the house. Existing car bridges tend to fill that gap with switches and fake lights that clutter the Home app and confuse Siri.
+
+This plugin takes the opposite approach. Every accessory maps to a native HomeKit service with honest state:
+
+- **Unknown stays unknown.** If Toyota hasn't reported a lock state, HomeKit says so instead of guessing.
+- **Commands are confirmed, not assumed.** After a lock or start, the plugin waits for the vehicle's next report before HomeKit changes state.
+- **The car is never woken up.** It reads Toyota's cached report, which protects the 12 V battery and Toyota's rate limits.
+- **Remote Start is the one exception.** HomeKit has no remote-start service, so it's an opt-in switch, off by default.
+
+The client logic is a TypeScript port of the Toyota module in RedLink, my iOS Toyota app, so the endpoints, headers and parsing rules come from code that already runs against Toyota's API every day.
+
+## Quick start
+
+Requires Homebridge `^1.8.0 || ^2.0.0`, Node `^22 || ^24`, and a Toyota North America account with the vehicle linked. Remote lock and start need a Remote Connect subscription.
+
+Install the latest release where Homebridge runs:
 
 ```sh
-git clone https://github.com/oliverames/homebridge-toyota.git
-cd homebridge-toyota
-npm ci && npm run build && npm pack
-# then, where Homebridge runs:
-npm install -g ./homebridge-toyota-0.3.0.tgz
+npm install -g https://github.com/oliverames/homebridge-toyota/releases/download/v0.3.2/homebridge-toyota-0.3.2.tgz
 ```
 
-## Configure
-
-Use the Homebridge UI (the plugin ships `config.schema.json`) or edit `config.json`:
+Then add the platform in the Homebridge UI, or in `config.json`:
 
 ```json
 {
@@ -45,69 +68,91 @@ Use the Homebridge UI (the plugin ships `config.schema.json`) or edit `config.js
   "username": "you@example.com",
   "password": "your Toyota password",
   "apiKey": "current OneApp client key",
+  "remoteStart": { "enabled": true },
   "_bridge": { "username": "0E:12:34:56:78:9A", "port": 36422 }
 }
 ```
 
-### Run it in a child bridge
+Open the plugin's settings page, click **Sign in / Send code**, enter the code Toyota emails you, and click **Verify**. The plugin picks up the session within 30 seconds, without a restart.
 
-Run this plugin in its own child bridge so a Toyota outage or restart never touches your other accessories. In the Homebridge UI open the plugin's menu and choose Bridge Settings, then enable the child bridge. Or add a `_bridge` block as above with a unique MAC-style `username` and a free `port`. Add the child bridge's accessory to HomeKit with its own pairing code. Restart the child bridge after changing the config.
+## What it adds to HomeKit
 
-### Options
+| Toyota data | HomeKit service | Notes |
+| --- | --- | --- |
+| Door locks | Lock Mechanism "Doors" | Real lock state. Lock and unlock send the remote command and confirm from the vehicle's next report. |
+| Doors, trunk or hatch, hood, windows, moonroof | One Contact Sensor each | Only for openings the vehicle reports a position for. |
+| EV charge level | Battery "EV Battery" | Includes low battery and charging. Fuel level is never exposed. |
+| Remote Start (opt-in) | Switch "Remote Start" | Off by default. Prepares the vehicle first; see below. |
+
+Run the plugin in its own [child bridge](https://github.com/homebridge/homebridge/wiki/Child-Bridges) (the `_bridge` block above) so a Toyota outage or restart never touches your other accessories.
+
+## Remote Start that gets the car ready first
+
+Turning on the Remote Start switch doesn't just fire the engine. It makes sure the car is in a state you'd want to start it in. Each step is skipped when the vehicle already satisfies it:
+
+1. **Check.** If a door, the hood, or the hatch is physically open, nothing is sent and the switch returns to off. The log says which one.
+2. **Lock** the doors if any are unlocked.
+3. **Close** open windows and the moonroof, and lock the hatch, when the vehicle reports those remote capabilities. These commands don't exist on 17CY vehicles.
+4. **Confirm** each step from the vehicle's next reports before moving on. A refused or ineffective step abandons the start, with the reason in the log.
+5. **Start** the engine. Climate uses whatever is saved in the Toyota app.
+
+Set `remoteStart.prepare` to `false` to start immediately instead. Toyota allows about two remote starts per ignition cycle.
+
+## Configuration
 
 | Option | Required | Default | Description |
 | --- | --- | --- | --- |
-| `username` | Yes | none | Toyota account email. |
-| `password` | Yes | none | Toyota account password. |
-| `apiKey` | Yes | none | OneApp public client key sent as `X-API-KEY`. Not bundled with the plugin. |
-| `oneTimePasscode` | No | none | Fallback only. Prefer the Sign in button on the settings page. See below. Clear it afterwards. |
+| `username` | Yes | (none) | Toyota account email. |
+| `password` | Yes | (none) | Toyota account password. |
+| `apiKey` | Yes | (none) | Toyota OneApp client key, sent as `X-API-KEY`. Not bundled; see below. |
 | `vin` | No | all vehicles | Expose only this VIN. |
 | `generation` | No | reported by Toyota, else `21MM` | `17CY`, `17CYPLUS`, `21MM` or `24MM`. |
 | `pollIntervalMinutes` | No | `5` | Minimum 5. Backs off automatically on errors. |
 | `exposeOpenings` | No | `true` | Contact sensors for doors, windows, trunk, hood and moonroof. |
 | `exposeBattery` | No | `true` | Battery service when a charge level is reported. |
 | `remoteStart.enabled` | No | `false` | Adds the Remote Start switch. |
-| `remoteStart.prepare` | No | `true` | Prepare the vehicle before starting (lock, close, check). Set to `false` to start immediately. |
-| `graphqlApiKey` | 24MM only | none | AppSync key for 24MM remote commands. |
+| `remoteStart.prepare` | No | `true` | Lock, close and check the vehicle before starting. |
+| `graphqlApiKey` | 24MM only | (none) | AppSync key for 24MM remote commands. |
+| `oneTimePasscode` | No | (none) | Fallback when the settings page isn't available. Clear it after use. |
 | `appVersion` | No | `3.5.0` | `X-APPVERSION` header. |
 
-### Getting and rotating the client key
+### The client key
 
-Toyota rotates the OneApp key every few months. The symptom is that sign-in works but every request returns `APIGW-403`, and the log says the client key has most likely been rotated. To get the new key, follow the `refresh-toyota-api-key` skill in `personal-plugins` (extract it from the OneApp APK), or copy it from RedLink's `ToyotaEndpointProfile.northAmerica`. Paste it into `apiKey` and restart the child bridge. No plugin release is needed.
+Toyota rotates the OneApp client key every few months. When it does, sign-in still works but every request returns `APIGW-403`, and the log says the key has most likely been rotated. The current value can be read from the Toyota OneApp Android APK (decompile it with a tool such as jadx and look at `NetworkDataProviderIml.apiKey()`). Paste it into `apiKey` and restart the child bridge. No plugin release is needed.
 
-### Signing in from the settings page
+### Signing in
 
-Toyota may email a one-time code the first time you sign in. Handle it without restarts:
+Toyota may email a one-time code the first time you sign in. The settings page handles it without restarts: save your email, password and key, click **Sign in / Send code**, enter the code, and click **Verify**. Keep the page open between the two steps, because the pending challenge lives in its memory. The session is saved to `<Homebridge storage>/homebridge-toyota/session.json` with owner-only permissions and refreshes silently after that. The page never displays your password, key, tokens or code.
 
-1. Open the plugin's settings in Homebridge, enter your email, password and client key, and click Save. Sign-in uses the saved settings.
-2. Click **Sign in / Send code**. Toyota emails a code.
-3. Enter the code and click **Verify**. The status line shows the account, the number of vehicles and when the session was last updated.
+## Behavior and limits
 
-Verifying writes `<Homebridge storage>/homebridge-toyota/session.json` (owner-only permissions), the same file the plugin uses. A running plugin picks up the new session on its next update or command, and resumes updates if it had paused for a sign-in problem (it checks every 30 seconds). No restart is needed. The code is held in memory by the settings page, so keep that page open between sending and verifying. A code is treated as valid for about 10 minutes; that limit is a conservative guess, not a measured Toyota timeout, so if Verify fails just click Sign in / Send code again. The page never shows your password, key, tokens or code.
+- **Data is Toyota's cached report.** Lock state can be hours old on a parked car, by design.
+- **Failures back off.** Polling backs off up to an hour, and an HTTP 429 waits at least 15 minutes. Wrong credentials or a pending code pause polling until you sign in again.
+- **Refusals are explained.** When Toyota rejects a command, the log shows Toyota's own reason with tokens and VINs removed.
+- **Not supported:** location, fuel level, tire pressure, trips, climate settings, hazards, horn and charging control. [docs/design.md](docs/design.md) explains each decision.
 
-If the settings page is not available, use the fallback: start the plugin once so Toyota sends the code, enter it in `oneTimePasscode`, save, and restart within 10 minutes. Clear the field afterwards. Once a session is saved it refreshes silently.
+**Verified live** (November 2026, 21MM bZ): sign-in with an emailed code, status polling, door lock, engine start and engine stop. The window, moonroof and hatch preparation commands and 24MM vehicles are implemented from Toyota's API but not yet confirmed on a real car. Reports from other models are welcome in [Issues](https://github.com/oliverames/homebridge-toyota/issues).
 
-## Remote Start preparation
+## Architecture
 
-With the Remote Start switch enabled, turning it on first prepares the vehicle (turn this off with `remoteStart.prepare: false`). The steps are sequential and each one is skipped when the vehicle already satisfies it:
+```
+src/
+  auth.ts        ForgeRock login, emailed-code challenge, token refresh
+  client.ts      Request headers, routes, refresh-and-retry, 24MM GraphQL commands
+  envelope.ts    Response envelope and Toyota success-code rules
+  parse.ts       Vehicle list, door and opening status, EV status, capabilities
+  state.ts       Pure mapping from Toyota data to HomeKit values
+  controller.ts  Poll, command and Remote Start preparation logic (no HomeKit imports)
+  poller.ts      Backoff and the poll loop
+  ui.ts          Sign-in handlers behind the settings page
+  accessory.ts   HomeKit services
+  platform.ts    Homebridge platform, discovery, accessory lifecycle
+homebridge-ui/
+  server.js           Custom settings UI server
+  public/index.html   Sign in / Send code, Verify, and session status
+```
 
-1. Read the vehicle status. If any door, the hood or the hatch or trunk is physically open, nothing is sent. The log says which one, and the switch returns to off.
-2. If a door is unlocked, send `door-lock`.
-3. If a window is open and the vehicle reports a window capability, send `power-window-close`. Same for an open moonroof (`sunroof-close`, moonroof capability, never on a bZ). If the hatch or trunk reports an unlocked state and the vehicle reports a hatch or trunk capability, send `trunk-lock`. These three commands do not exist on 17CY. Without the capability the step is skipped with a log note and the start goes ahead.
-4. Each command is confirmed from the next status reads (up to three, 10 seconds apart, the same as a lock) before the next step. If a step is refused, errors, or does not take effect, the start is abandoned and the log gives the reason. A rate limit on a read also stops it rather than retrying.
-5. Then it starts the engine, or climate on an EV.
-
-This works from Toyota's last stored report. The plugin never wakes the vehicle, so on a car that has not reported recently the preparation may act on old information, and a start can wait on a slow report.
-
-## Behaviour and limits
-
-- Data is Toyota's cached report. The plugin never wakes the vehicle, so lock state can be hours old on a parked car. This protects the 12 V battery and Toyota's rate limits.
-- After a command the plugin reads status up to three times, 10 seconds apart. If the vehicle has not reported the change, HomeKit returns to the reported state and the log says why.
-- API failures are caught and logged. Polling backs off up to one hour, and a 429 waits at least 15 minutes. Wrong credentials or a pending passcode pause polling until you sign in from the settings page or restart.
-- Tokens are saved in `<Homebridge storage>/homebridge-toyota/session.json` with owner-only permissions. Credentials and the key sit in `config.json` like any Homebridge plugin.
-- Not supported: location, fuel level, tire pressure, trips, climate temperature, hazards, horn and charging control. See [docs/design.md](docs/design.md) for why.
-- When Toyota refuses a command, the log shows Toyota's own reason when its response includes one (secrets and VINs removed). Debug logging also shows the header names and body of each command sent.
-- Nothing was verified against a live vehicle at the time of writing.
+The controller has no HomeKit imports, so the vehicle logic is tested on its own against a stateful fake vehicle. The full reasoning, including the options that were rejected, is in [docs/design.md](docs/design.md).
 
 ## Development
 
@@ -117,27 +162,28 @@ npm run lint
 npm run typecheck
 npm test
 npm run build
+npm pack        # produces the installable tarball
 ```
 
-Tests use mocked `fetch` and synthetic payloads. They never contact Toyota. CI runs the same steps on every push to `main`.
+Tests use mocked `fetch` and synthetic payloads and never contact Toyota. CI runs the same steps on Node 22 and 24 for every push to `main`.
 
-```
-src/
-  auth.ts        ForgeRock login, OTP challenge, token refresh
-  client.ts      Request headers, routes, refresh-and-retry, GraphQL command
-  envelope.ts    Response envelope and Toyota success-code rules
-  parse.ts       Vehicle list, door and opening status, EV status
-  state.ts       Pure mapping to HomeKit values
-  controller.ts  Poll and command logic per vehicle (no HomeKit imports)
-  poller.ts      Backoff and the poll loop
-  ui.ts          Sign-in handlers for the settings page (homebridge-ui/server.js wraps them)
-homebridge-ui/
-  server.js      Custom settings UI server
-  public/index.html  Sign in / Send code, Verify and status line
-  accessory.ts   HomeKit services
-  platform.ts    Homebridge platform, discovery, accessory lifecycle
-```
+---
 
-## Provenance
+<p align="center">
+  <a href="https://www.buymeacoffee.com/oliverames">
+    <img src="https://img.shields.io/badge/Buy_Me_a_Coffee-support-f5a542?style=for-the-badge&logo=buy-me-a-coffee&logoColor=white" alt="Buy Me a Coffee">
+  </a>
+</p>
 
-Endpoints, headers and parsing rules come from RedLink's `ToyotaKit` and its Toyota APK research. Toyota names are used only to describe compatibility. Author: Oliver Ames.
+<p align="center">
+  <sub>
+    Built by <a href="https://ames.consulting">Oliver Ames</a> in Vermont
+    &bull; <a href="https://github.com/oliverames">GitHub</a>
+    &bull; <a href="https://linkedin.com/in/oliverames">LinkedIn</a>
+    &bull; <a href="https://bsky.app/profile/oliverames.bsky.social">Bluesky</a>
+  </sub>
+</p>
+
+<p align="center">
+  <sub>Toyota is a trademark of Toyota Motor Corporation, used here only to describe compatibility.</sub>
+</p>

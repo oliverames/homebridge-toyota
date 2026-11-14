@@ -1,6 +1,6 @@
 # Design
 
-This plugin exposes a Toyota North America vehicle to HomeKit using only services HomeKit already defines. The Toyota side is a TypeScript port of the client logic in RedLink (`oliverames/redlink`, `Sources/ToyotaKit`). Nothing here was verified against Toyota's live API; see "Verification status" at the end.
+This plugin exposes a Toyota North America vehicle to HomeKit using only services HomeKit already defines. The Toyota side is a TypeScript port of the client logic in RedLink, the author's iOS Toyota app (its `ToyotaKit` module). Live verification is limited; see "Verification status" at the end.
 
 ## HomeKit mapping
 
@@ -69,7 +69,7 @@ Wrong credentials, a pending code or a rejected code pause polling until a sign-
 
 ### Client key
 
-Toyota's OneApp public client key (`X-API-KEY`) rotates every few months. It is required config (`apiKey`), is never bundled or committed, and can be changed without a release. Get the current value by following the `refresh-toyota-api-key` skill in `personal-plugins` (jadx the OneApp APK and read `NetworkDataProviderIml.apiKey()`), or copy it from RedLink's `ToyotaEndpointProfile.northAmerica`. Header names drift with it; they live in `buildHeaders` in `src/client.ts`. The 24MM AppSync key (`graphqlApiKey`) is separate and only used for 24MM remote commands.
+Toyota's OneApp public client key (`X-API-KEY`) rotates every few months. It is required config (`apiKey`), is never bundled or committed, and can be changed without a release. Get the current value by decompiling the Toyota OneApp Android APK (for example with jadx) and reading `NetworkDataProviderIml.apiKey()`. Header names drift with it; they live in `buildHeaders` in `src/client.ts`. The 24MM AppSync key (`graphqlApiKey`) is separate and only used for 24MM remote commands.
 
 ## Polling and rate limits
 
@@ -107,4 +107,6 @@ Verified: parsing and mapping against synthetic payloads modelled on RedLink's t
 
 The `startClimate` request shape (URL, header names and values, body bytes) is pinned in `test/command-request.test.ts` against RedLink's `ToyotaRequestFactory`. The live HTTP 400 from issue #3 turned out to be the wrong command for the car: on a 21MM bZ, `engine-start` works and `startClimate` is refused, so 21MM EVs use `engine-start` (0.3.1). The Remote Start preparation sequence is tested against a stateful fake vehicle and mocked `fetch`, not a real one.
 
-Not verified (no live calls were allowed): Toyota's current responses, the settings page rendering inside Homebridge UI, the platform's 30 second resume timer against a real Homebridge, the OTP challenge persistence across a restart, ForgeRock challenge lifetime, command confirmation timing, 24MM GraphQL commands, and behaviour on any specific vehicle.
+Verified live on 2026-11-14 with a 21MM bZ: sign-in with an emailed code through the settings page inside Homebridge UI, status polling, `door-lock`, `engine-start` and `engine-stop`.
+
+Not verified: the platform's 30 second resume timer against a real Homebridge, the OTP challenge persistence across a restart, ForgeRock challenge lifetime, command confirmation timing, 24MM GraphQL commands, the window, moonroof and hatch preparation commands, and behaviour on other vehicles.
