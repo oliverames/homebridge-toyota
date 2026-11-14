@@ -1,0 +1,87 @@
+# Design
+
+This plugin exposes a Toyota North America vehicle to HomeKit using only services HomeKit already defines. The Toyota side is a TypeScript port of the client logic in RedLink (`oliverames/redlink`, `Sources/ToyotaKit`). Nothing here was verified against Toyota's live API; see "Verification status" at the end.
+
+## HomeKit mapping
+
+The rule is native-only: no lights, switches or outlets standing in for something else, and nothing that duplicates a device HomeKit already has.
+
+| Vehicle fact | HomeKit service | Source | Notes |
+| --- | --- | --- | --- |
+| Door lock state, lock and unlock | `LockMechanism` ("Doors") | Remote status, `door-lock` and `door-unlock` commands | Current state is `SECURED` only when every door that reports a lock token is locked, `UNSECURED` if any is unlocked, and `UNKNOWN` otherwise. A closed door is never read as a locked door (RedLink fixed that bug). |
+| Each door, trunk or hatch, hood, window and moonroof position | One `ContactSensor` per reported opening | Remote status | Closed is `CONTACT_DETECTED`. An opening that reports no position gets no sensor. On by default, `exposeOpenings: false` removes them. |
+| EV high-voltage battery level, low state, charging | `Battery` ("EV Battery") | EV status | Created only when Toyota returns a valid state of charge. `StatusLowBattery` at 20% or below. `ChargingState` is `CHARGING` or `NOT_CHARGING`. |
+| Remote start (optional) | `Switch` ("Remote Start") | `engine-start`/`engine-stop`, or `startClimate`/`stopClimate` on an EV | Off by default and the only non-native service. State follows engine or climate status. See below. |
+
+### The one exception: Remote Start
+
+HomeKit has no remote-start, ignition or preconditioning type. A `Switch` is the least misleading stand-in, it is opt-in (`remoteStart.enabled`, default `false`), the schema says what it does, and it is named "Remote Start" so Siri and automations cannot confuse it with a light or outlet. On an EV the switch starts and stops climate (RedLink's `climateOn`/`climateOff`, 68 F auto) because that is the remote-start equivalent. On other vehicles it sends `engine-start` and `engine-stop`. The switch reflects reported state, not the request, and returns to the reported state if the vehicle does not confirm.
+
+## Rejected options
+
+- **Fuel level as `Battery`.** A gas tank is not a battery, and `Battery` carries low-battery and charging semantics that would be false. Fuel level is never exposed. A hybrid's traction battery is not exposed either unless Toyota reports a charge level.
+- **`HeaterCooler` or `Thermostat` for climate.** Both require a current temperature. Toyota reports a target temperature and running state, not a cabin temperature, so a thermostat would show invented data.
+- **Switches for hazards, horn, headlights, charging start/stop, sunroof and windows.** Momentary actions and commands with no state HomeKit models. They would be fake accessories. RedLink and Shortcuts cover them.
+- **A second lock for the trunk or hatch.** Toyota does offer `trunk-lock` and `trunk-unlock` on 17CYPLUS, 21MM and 24MM, but the status payload does not reliably report a separate hatch lock token (RedLink treats a hatch as position only). A lock with no readable state would have to guess, so it is left out. This can be revisited once a live payload shows a hatch lock token.
+- **`GarageDoorOpener` for the trunk.** Wrong semantics and a Siri safety prompt for the wrong thing.
+- **`OccupancySensor` or presence for "driving" or "parked".** Toyota does not report occupancy. Driving is inferred from speed telemetry, which this plugin does not poll.
+- **Location, odometer, tire pressure, trips, health, service history.** No HomeKit type exists, and polling the extra endpoints costs rate limit for nothing.
+- **A `SecuritySystem` or `Doorbell` for alerts.** Not a fit.
+- **Exposing vehicle-wake (`refresh-status`) as a button or on a timer.** See "Polling".
+
+## Authentication
+
+Ported from `ToyotaAuthService`:
+
+1. `POST` the ForgeRock `authenticate` endpoint, answering callbacks: `NameCallback` "User Name", `PasswordCallback` password, `ui_locales`, choice and confirmation callbacks with index 0.
+2. A `PasswordCallback` titled "One Time Password" means Toyota sent a code. See below.
+3. Trade the `tokenId` for an authorization code at `authorize` (cookie `iPlanetDirectoryPro`, redirects not followed, code read from the `Location` header).
+4. Exchange the code at `access_token` (client `oneappsdkclient`, PKCE method `plain`).
+5. Validate the `id_token` (algorithm not `none`, audience `oneappsdkclient`, not expired) and use `sub` as the GUID. The signature is not verified, matching RedLink; only the TLS response from Toyota is trusted.
+
+Refresh tokens are single use. The client therefore refreshes inside one in-flight promise, persists the rotated session before using it, refreshes proactively when 5 minutes remain, and on a 401 or 403 refreshes once and retries once. If the saved refresh token is rejected (`invalid_grant`) it falls back to a full sign-in. A 403 that survives a fresh refresh is reported as a probable client key rotation, because a refreshed token proves the login is fine.
+
+### One-time passcode
+
+Toyota may text a code on sign-in. A headless plugin cannot prompt, and a Homebridge config change requires a restart, which would normally start a new login and invalidate the code. So the pending ForgeRock challenge is saved to the plugin storage folder (owner-only permissions, passwords blanked) for 10 minutes. The flow is: start the plugin, receive the code, put it in `oneTimePasscode`, restart. The saved challenge is answered with the code instead of starting a new login. After the session is saved Toyota should not ask again until the saved refresh token dies. The 10 minute limit is a conservative guess, not a measured ForgeRock timeout.
+
+Wrong credentials, a pending code or a rejected code stop polling until restart. Retrying would send more texts or risk locking the account.
+
+### Client key
+
+Toyota's OneApp public client key (`X-API-KEY`) rotates every few months. It is required config (`apiKey`), is never bundled or committed, and can be changed without a release. Get the current value by following the `refresh-toyota-api-key` skill in `personal-plugins` (jadx the OneApp APK and read `NetworkDataProviderIml.apiKey()`), or copy it from RedLink's `ToyotaEndpointProfile.northAmerica`. Header names drift with it; they live in `buildHeaders` in `src/client.ts`. The 24MM AppSync key (`graphqlApiKey`) is separate and only used for 24MM remote commands.
+
+## Polling and rate limits
+
+- Default and minimum interval is 5 minutes, configurable upward. One cycle reads cached status (one `GET`), plus EV status for the battery and engine or climate status when Remote Start is enabled. Reads return what Toyota last stored and do not contact the vehicle.
+- The plugin never calls `refresh-status`, `realtime-status` or the pre-wake mutation. RedLink's research (`docs/toyota-refresh-behavior-2026-11-02.md`) records that OneApp itself never schedules a background wake, and repeated wakes risk the 12 V battery and HTTP 429. Lock state is therefore as fresh as the vehicle's own last report, which can be hours old on a parked car. That is a known limit, not a bug.
+- Failures double the interval per consecutive failure, capped at one hour, plus up to 10% jitter. A 429 never retries sooner than 15 minutes. Sign-in problems stop polling.
+- Endpoints Toyota refuses for a vehicle (403 or 404 on EV status or climate status) are parked for 12 hours, as RedLink does, so a gas vehicle or an EV without climate status does not burn requests.
+- Everything inside a poll or command is caught. A poll never throws, so an API failure cannot crash the child bridge. The first failure is logged at warn level, later ones at debug, and recovery is logged once.
+
+## Commands
+
+A HomeKit set handler has only a few seconds, but Toyota commands are asynchronous. The handler returns at once and the command runs in the background:
+
+1. `POST` the command (REST `v1/global/remote/command` for 17CYPLUS and 21MM, the legacy `code/value` body for 17CY, AppSync `SendRemoteCommand` for 24MM).
+2. Re-read cached status up to three times at 10 second intervals, the cadence OneApp uses.
+3. If the report matches, HomeKit settles. If not, or if a read fails, the target returns to the reported state and a warning is logged. The lock does not claim to be locked on the strength of an accepted request.
+
+One command runs at a time. A rejection carried in an HTTP 200 body (for example `VEHICLE_MOVING`) is surfaced using RedLink's success-code rules: Toyota's success codes are not a closed set, so an unknown code counts as failure only when no accompanying text says it succeeded.
+
+## Subscriptions and capabilities
+
+Remote lock, unlock and start require an active Toyota Remote Connect subscription. Status reads may work without one; that is unverified. At discovery the plugin logs the vehicle's generation, its enabled remote capability names and the subscription list Toyota returns (names and status only) so the answer for a given vehicle is visible in the Homebridge log.
+
+## Secrets
+
+- Credentials and the client key live only in Homebridge's `config.json`.
+- The session (tokens) is in `<storage>/homebridge-toyota/session.json`, mode 0600, written atomically. The OTP challenge file never contains a password.
+- Logs contain no tokens, passwords, keys or full VINs (last four digits only).
+- Tests use synthetic payloads and mocked `fetch`. No test opens a network connection.
+
+## Verification status
+
+Verified: parsing and mapping against synthetic payloads modelled on RedLink's test fixtures, token refresh and OTP flows against mocked responses, and HomeKit service creation against the real HAP library.
+
+Not verified (no live calls were allowed): Toyota's current responses, the OTP challenge persistence across a restart, ForgeRock challenge lifetime, command confirmation timing, 24MM GraphQL commands, and behaviour on any specific vehicle.
