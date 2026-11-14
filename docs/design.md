@@ -11,7 +11,7 @@ The rule is native-only: no lights, switches or outlets standing in for somethin
 | Door lock state, lock and unlock | `LockMechanism` ("Doors") | Remote status, `door-lock` and `door-unlock` commands | Current state is `SECURED` only when every door that reports a lock token is locked, `UNSECURED` if any is unlocked, and `UNKNOWN` otherwise. A closed door is never read as a locked door (RedLink fixed that bug). |
 | Each door, trunk or hatch, hood, window and moonroof position | One `ContactSensor` per reported opening | Remote status | Closed is `CONTACT_DETECTED`. An opening that reports no position gets no sensor. On by default, `exposeOpenings: false` removes them. |
 | EV high-voltage battery level, low state, charging | `Battery` ("EV Battery") | EV status | Created only when Toyota returns a valid state of charge. `StatusLowBattery` at 20% or below. `ChargingState` is `CHARGING` or `NOT_CHARGING`. |
-| Remote start (optional) | `Switch` ("Remote Start") | `engine-start`/`engine-stop`, or `startClimate`/`stopClimate` on an EV | Off by default and the only non-native service. State follows engine or climate status. See below. |
+| Remote start (optional) | `Switch` ("Remote Start") | `engine-start`/`engine-stop` (including 21MM EVs, live-verified on a bZ), or `startClimate`/`stopClimate` on 24MM EVs (unverified) | Off by default and the only non-native service. State follows engine or climate status. See below. |
 
 ### The one exception: Remote Start
 
@@ -105,6 +105,6 @@ Remote lock, unlock and start require an active Toyota Remote Connect subscripti
 
 Verified: parsing and mapping against synthetic payloads modelled on RedLink's test fixtures, token refresh and OTP flows against mocked responses, the settings UI handlers (send code, verify, rejected and expired codes, no secrets in responses, session file mode) against mocked fetch, the client reloading a session file written by another process, and HomeKit service creation against the real HAP library. The UI server also answered requests over IPC in a smoke run.
 
-The `startClimate` request shape (URL, header names and values, body bytes) is pinned in `test/command-request.test.ts` against RedLink's `ToyotaRequestFactory`. The live HTTP 400 from issue #3 was not reproduced or explained by that comparison; see the CHANGELOG. The Remote Start preparation sequence is tested against a stateful fake vehicle and mocked `fetch`, not a real one.
+The `startClimate` request shape (URL, header names and values, body bytes) is pinned in `test/command-request.test.ts` against RedLink's `ToyotaRequestFactory`. The live HTTP 400 from issue #3 turned out to be the wrong command for the car: on a 21MM bZ, `engine-start` works and `startClimate` is refused, so 21MM EVs use `engine-start` (0.3.1). The Remote Start preparation sequence is tested against a stateful fake vehicle and mocked `fetch`, not a real one.
 
 Not verified (no live calls were allowed): Toyota's current responses, the settings page rendering inside Homebridge UI, the platform's 30 second resume timer against a real Homebridge, the OTP challenge persistence across a restart, ForgeRock challenge lifetime, command confirmation timing, 24MM GraphQL commands, and behaviour on any specific vehicle.

@@ -35,7 +35,7 @@ function build(handler: Parameters<typeof mockFetch>[0], logs: string[] = []) {
 describe('startClimate request (issue #3: pinned against RedLink ToyotaRequestFactory)', () => {
   it('sends exactly the URL, method, headers and body RedLink sends for climate-on', async () => {
     const { api, net } = build(() => new Response('{"status":"SUCCESS","payload":{}}', { status: 200 }));
-    await api.sendCommand('remoteStart', VIN, '21MM', true);
+    await api.sendCommand('remoteStart', VIN, '24MM', true);
     expect(net.calls).toHaveLength(1);
     const { url, init } = net.calls[0]!;
     expect(url).toBe('https://onecdn.telematicsct.com/oneapi/v2/electric/command');
@@ -58,8 +58,8 @@ describe('startClimate request (issue #3: pinned against RedLink ToyotaRequestFa
       accept: 'application/json',
       vin: VIN,
       'x-vin': VIN,
-      'x-generation': '21MM',
-      generation: '21MM',
+      'x-generation': '24MM',
+      generation: '24MM',
       'x-brand': 'T',
       'x-appbrand': 'T',
       'x-channel': 'ONEAPP',
@@ -73,9 +73,17 @@ describe('startClimate request (issue #3: pinned against RedLink ToyotaRequestFa
 
   it('stopClimate keeps the same route and headers with the bare body', async () => {
     const { api, net } = build(() => new Response('{"status":"SUCCESS"}', { status: 200 }));
-    await api.sendCommand('remoteStop', VIN, '21MM', true);
+    await api.sendCommand('remoteStop', VIN, '24MM', true);
     expect(net.calls[0]?.init?.body).toBe('{"command":"stopClimate"}');
     expect((net.calls[0]?.init?.headers as Record<string, string>)['device-id']).toBe('device-abc');
+  });
+
+  it('starts and stops a 21MM EV with engine-start/engine-stop on the remote command route (live-verified on a bZ)', async () => {
+    const { api, net } = build(() => new Response('{"status":"SUCCESS"}', { status: 200 }));
+    await api.sendCommand('remoteStart', VIN, '21MM', true);
+    await api.sendCommand('remoteStop', VIN, '21MM', true);
+    expect(net.calls.map((c) => c.url)).toEqual(Array(2).fill('https://onecdn.telematicsct.com/oneapi/v1/global/remote/command'));
+    expect(net.calls.map((c) => c.init?.body)).toEqual(['{"command":"engine-start","autoFixPopup":false}', '{"command":"engine-stop","autoFixPopup":false}']);
   });
 
   it('sends the window, moonroof and hatch preparation commands on the shared remote command route', async () => {
@@ -99,7 +107,7 @@ describe('startClimate request (issue #3: pinned against RedLink ToyotaRequestFa
 
   it('logs the outgoing command shape at debug level without any token', async () => {
     const { api, logs } = build(() => new Response('{"status":"SUCCESS"}', { status: 200 }));
-    await api.sendCommand('remoteStart', VIN, '21MM', true);
+    await api.sendCommand('remoteStart', VIN, '24MM', true);
     const line = logs.find((l) => l.includes('POST v2/electric/command'));
     expect(line).toContain('device-id');
     expect(line).toContain('"temperature":68');
@@ -112,7 +120,7 @@ describe("refusal reason from Toyota's body", () => {
   it('puts the reason from an HTTP 400 body in the error, with token-like text removed', async () => {
     const body = JSON.stringify({ status: 'ERROR', message: 'Remote climate refused: a door is open. Bearer abcdef0123456789abcdef0123456789 for TESTVIN0000000001' });
     const { api } = build(() => new Response(body, { status: 400 }));
-    const error = await api.sendCommand('remoteStart', VIN, '21MM', true).catch((e: unknown) => e);
+    const error = await api.sendCommand('remoteStart', VIN, '24MM', true).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ApiHttpError);
     const message = (error as Error).message;
     expect(message).toContain('HTTP 400');

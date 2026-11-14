@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.1
+
+- Remote Start on 21MM EVs now uses `engine-start`/`engine-stop` on `v1/global/remote/command`, and confirms with engine status. Live test on 2026-11-14 (21MM bZ): `v2/electric/command` `startClimate` answered a bare HTTP 400 every time, while `engine-start` was accepted, engine status reported running within 20 seconds, and `engine-stop` stopped it. pytoyoda reports the same for the bZ4X. The EV climate route remains for 24MM EVs, where it is unverified.
+- Toyota limits remote starts to about two per ignition cycle, so a failed or repeated attempt can use up the allowance until the car is driven.
+
 ## 0.3.0
 
 - Remote Start now prepares the vehicle first (issue #3), on by default; set `remoteStart.prepare` to `false` to start immediately. It reads status and refuses, with a logged reason, if a door, the hood or the hatch is open. Otherwise it locks unlocked doors, closes open windows and the moonroof where the vehicle reports the capability (`power-window-close`, `sunroof-close`), and locks an unlocked hatch (`trunk-lock`). Each step is skipped when already satisfied, confirmed from status like a lock, and a refused or unconfirmed step abandons the start and returns the switch to off.

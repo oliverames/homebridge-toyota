@@ -69,7 +69,7 @@ export class ToyotaVehicleApi implements VehicleApi {
   private climateStatusParkedUntil = 0;
 
   async readRunning(vin: string, generation: Generation, electric: boolean): Promise<boolean | undefined> {
-    if (electric && this.now() >= this.climateStatusParkedUntil) {
+    if (usesClimateRoute(generation, electric) && this.now() >= this.climateStatusParkedUntil) {
       // climate-status answers a steady 403 on some EVs (RedLink parks it), so fall back to engine status.
       try {
         const climate = parseClimateRunning((await this.client.send(() => routes.climateStatus(), vin, generation)).data);
@@ -90,11 +90,11 @@ export class ToyotaVehicleApi implements VehicleApi {
   }
 
   async sendCommand(command: VehicleCommand, vin: string, generation: Generation, electric: boolean): Promise<void> {
-    if (command === 'remoteStart' && electric) {
+    if (command === 'remoteStart' && usesClimateRoute(generation, electric)) {
       await this.client.send((s) => routes.startClimate(s), vin, generation);
       return;
     }
-    if (command === 'remoteStop' && electric) {
+    if (command === 'remoteStop' && usesClimateRoute(generation, electric)) {
       await this.client.send((s) => routes.stopClimate(s), vin, generation);
       return;
     }
@@ -113,6 +113,16 @@ export class ToyotaVehicleApi implements VehicleApi {
     }
     await this.client.send((s) => routes.remoteCommand(remote, generation, s, vin), vin, generation);
   }
+}
+
+/**
+ * 21MM EVs start and stop remotely through the shared engine-start/engine-stop remote command.
+ * Verified live 2026-11-14 on a 21MM bZ: v2/electric/command startClimate answered a bare HTTP 400
+ * from a request identical to RedLink's, while engine-start was accepted and engine-status confirmed
+ * it running (pytoyoda reports the same for the bZ4X). The EV climate route stays for other EVs.
+ */
+export function usesClimateRoute(generation: Generation, electric: boolean): boolean {
+  return electric && generation !== '21MM';
 }
 
 /** Maps any thrown error to the poll outcome that decides backoff or stopping. */
