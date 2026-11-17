@@ -6,7 +6,7 @@
 
 **Verified**: 140 tests, lint, typecheck and build pass locally. Deployed to home-server (0.3.1 backed up to `~/.homebridge/backups/homebridge-toyota-0.3.1-2026-11-17`); the child bridge restarted on v0.3.3 and vehicle discovery succeeded.
 
-**Left off at**: Not yet exercised: the longer confirmation window and the throttle against a real Toyota outage. Watch the next Remote Start in the log.
+**Left off at**: 0.3.4 (EV battery parks only after three 403s in a row) is released as v0.3.4 on GitHub and running on home-server. Not yet exercised: the longer confirmation window and the throttle against a real Toyota outage. Watch the next Remote Start in the log.
 
 ---
 
