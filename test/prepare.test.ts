@@ -34,6 +34,8 @@ class FakeCar implements VehicleApi {
   readError?: Error;
   /** Throws from the Nth status read (1-based) onward. */
   failReadsFrom?: { n: number; error: Error };
+  /** Status reads (1-based) that answer a transient 503. */
+  failReads?: Set<number>;
   running = false;
   constructor(public car: CarState) {}
 
@@ -43,6 +45,7 @@ class FakeCar implements VehicleApi {
     this.statusReads++;
     if (this.readError) throw this.readError;
     if (this.failReadsFrom && this.statusReads >= this.failReadsFrom.n) throw this.failReadsFrom.error;
+    if (this.failReads?.has(this.statusReads)) throw new ApiHttpError(503, '');
     const c = this.car;
     return {
       doorsLocked: c.doorLocked,
@@ -166,14 +169,14 @@ describe('Remote Start preparation', () => {
     expect(failures[0]).toContain('Key detected inside the vehicle');
   });
 
-  it('aborts when a step is accepted but does not take effect within the usual three reads', async () => {
+  it('aborts when a step is accepted but does not take effect within the minute of confirmation reads', async () => {
     const car = new FakeCar({ ...parked, windowOpen: true });
     car.ignore.add('closeWindows');
     const { controller, failures, sleeps } = setup(car);
     await controller.command('remoteStart');
     expect(car.sent).toEqual(['closeWindows']);
-    expect(sleeps).toEqual([10_000, 10_000, 10_000]);
-    expect(car.statusReads).toBe(1 + 3);
+    expect(sleeps).toEqual(Array(6).fill(10_000));
+    expect(car.statusReads).toBe(1 + 6);
     expect(failures[0]).toContain('could not close the windows first (not confirmed by the vehicle yet)');
   });
 
@@ -187,13 +190,50 @@ describe('Remote Start preparation', () => {
     expect(failures[0]).toContain('429');
   });
 
-  it('aborts when the first status read fails', async () => {
+  it('aborts when the first status read fails twice', async () => {
     const car = new FakeCar({ ...parked });
     car.readError = new ApiHttpError(503, '');
     const { controller, failures } = setup(car);
     await controller.command('remoteStart');
     expect(car.sent).toEqual([]);
+    expect(car.statusReads).toBe(2);
     expect(failures[0]).toContain('could not read the vehicle status first');
+  });
+
+  it('retries a transient first status read once, then starts', async () => {
+    const car = new FakeCar({ ...parked });
+    car.failReads = new Set([1]);
+    const { controller, failures, sleeps } = setup(car);
+    await controller.command('remoteStart');
+    expect(car.sent).toEqual(['remoteStart']);
+    expect(sleeps[0]).toBe(5_000);
+    expect(failures).toEqual([]);
+  });
+
+  it('does not retry the first status read on a rate limit', async () => {
+    const car = new FakeCar({ ...parked });
+    car.readError = new ApiHttpError(429, '');
+    const { controller } = setup(car);
+    await controller.command('remoteStart');
+    expect(car.statusReads).toBe(1);
+  });
+
+  // 2026-11-17: the lock was accepted but a 21MM bZ took longer than 30 s to report it, so the start was never sent.
+  it('waits through a slow lock report and a 503 while confirming, then starts', async () => {
+    const car = new FakeCar({ ...parked, doorLocked: false });
+    car.ignore.add('lock');
+    car.failReads = new Set([3]);
+    const { controller, failures } = setup(car);
+    const command = controller.command('remoteStart');
+    // The car reports the lock only on the fifth status read (about 40 seconds in).
+    const read = car.readStatus.bind(car);
+    car.readStatus = async () => {
+      if (car.statusReads === 4) car.car.doorLocked = true;
+      return read();
+    };
+    await command;
+    expect(car.sent).toEqual(['lock', 'remoteStart']);
+    expect(failures).toEqual([]);
   });
 
   it('does nothing extra when preparation is turned off', async () => {

@@ -103,11 +103,53 @@ describe('ToyotaClient token handling', () => {
     expect(net.calls.filter((c) => c.url === ACCESS_TOKEN_URL)).toHaveLength(1);
   });
 
-  it('a 403 that survives a fresh refresh is reported as a rotated client key', async () => {
-    const store = makeStore();
-    store.save(fresh);
-    const { client } = build((url) => (url === ACCESS_TOKEN_URL ? jsonResponse(tokenBody(NOW)) : new Response('{"responseCode":"APIGW-403"}', { status: 403 })), store);
-    await expect(client.send(() => routes.vehicles(), 'V', '21MM')).rejects.toBeInstanceOf(ClientKeyRejectedError);
+  describe('403s that survive a fresh refresh', () => {
+    const refused = (url: string) => (url === ACCESS_TOKEN_URL ? jsonResponse(tokenBody(NOW)) : new Response('{"responseCode":"APIGW-403"}', { status: 403 }));
+    function clocked() {
+      const store = makeStore();
+      store.save(fresh);
+      const clock = { now: NOW };
+      const net = mockFetch(refused);
+      const auth = new ToyotaAuth(net.fn, undefined, () => clock.now);
+      return { client: new ToyotaClient(config, auth, store, net.fn, quiet, () => clock.now), net, clock };
+    }
+
+    // 2026-11-16/17: Toyota answered this way during gateway trouble, and the same key worked ten minutes later.
+    it('a single one is an HTTP error, not a rotated client key', async () => {
+      const { client } = clocked();
+      const error = await client.send(() => routes.vehicles(), 'V', '21MM').catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(ApiHttpError);
+      expect((error as ApiHttpError).status).toBe(403);
+    });
+
+    it('blame the client key after three in a row', async () => {
+      const { client, clock } = clocked();
+      for (let i = 0; i < 2; i++) {
+        await expect(client.send(() => routes.vehicles(), 'V', '21MM')).rejects.toBeInstanceOf(ApiHttpError);
+        clock.now += 6 * 60_000;
+      }
+      await expect(client.send(() => routes.vehicles(), 'V', '21MM')).rejects.toBeInstanceOf(ClientKeyRejectedError);
+    });
+
+    it('do not force another refresh within five minutes, so the sign-in server is not hammered into a 429', async () => {
+      const { client, net, clock } = clocked();
+      await client.send(() => routes.vehicles(), 'V', '21MM').catch(() => {});
+      clock.now += 60_000;
+      await client.send(() => routes.vehicles(), 'V', '21MM').catch(() => {});
+      await client.send(() => routes.vehicles(), 'V', '21MM').catch(() => {});
+      expect(net.calls.filter((c) => c.url === ACCESS_TOKEN_URL)).toHaveLength(1);
+      clock.now += 5 * 60_000;
+      await client.send(() => routes.vehicles(), 'V', '21MM').catch(() => {});
+      expect(net.calls.filter((c) => c.url === ACCESS_TOKEN_URL)).toHaveLength(2);
+    });
+
+    it('are blamed on the key at once by a one-shot check such as the settings page', async () => {
+      const store = makeStore();
+      store.save(fresh);
+      const net = mockFetch(refused);
+      const client = new ToyotaClient(config, new ToyotaAuth(net.fn, undefined, () => NOW), store, net.fn, quiet, () => NOW, { keyRejectionThreshold: 1 });
+      await expect(client.send(() => routes.vehicles(), 'V', '21MM')).rejects.toBeInstanceOf(ClientKeyRejectedError);
+    });
   });
 
   it('surfaces 429 distinctly and does not refresh', async () => {

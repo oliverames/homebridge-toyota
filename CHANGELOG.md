@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.3 - 2026-11-17
+
+Fixes for the failures logged on 2026-11-16 and 2026-11-17, when Toyota answered 500, 503, 403 and 429 in bursts.
+
+- A 401 or 403 forces a token refresh at most once every 5 minutes. Each forced refresh is a request to Toyota's sign-in server, and back-to-back refreshes during a gateway outage were what drew its HTTP 429s.
+- The "client key has most likely been rotated" warning now needs three refreshed-and-still-refused requests in a row. It fired twice from a single passing 403, and the same key worked ten minutes later both times. The settings page still reports it on the first refusal.
+- Commands are confirmed over six status reads (one minute) instead of three. A 21MM bZ took 31 seconds to report a lock, so Remote Start abandoned itself after Toyota had accepted the lock.
+- A single 500 or 503 while confirming no longer abandons the command; the next read is tried. The status read that starts Remote Start preparation gets one retry after 5 seconds. A 429 or sign-in failure still stops at once.
+- A repeat of the command already running (a second tap, or Siri retrying) is absorbed quietly instead of being logged as a failure and resetting the switch.
+
 ## 0.3.2 - 2026-11-14
 
 - Public release under the MIT license, with a new README, an original icon, and a GitHub release tarball for installation.

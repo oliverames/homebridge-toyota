@@ -28,7 +28,7 @@ export interface ControllerOptions {
   exposeBattery: boolean;
   /** When set, Remote Start first prepares the vehicle using the commands this vehicle supports. */
   prepare?: PrepareCapabilities;
-  /** Pauses between verification reads after a command. OneApp itself uses 3 x 10 s. */
+  /** Pauses between verification reads after a command. */
   verifyDelaysMs?: number[];
   /** True when Toyota's vehicle record says the vehicle is an EV or plug-in hybrid. */
   electricHint?: boolean;
@@ -36,8 +36,14 @@ export interface ControllerOptions {
   sleep?: (ms: number) => Promise<void>;
 }
 
-export const DEFAULT_VERIFY_DELAYS_MS = [10_000, 10_000, 10_000];
+/**
+ * Six reads, 10 seconds apart. OneApp uses 3 x 10 s, but a 21MM bZ has taken
+ * 31 seconds to report a lock (2026-11-16), and an unconfirmed lock abandons
+ * Remote Start. The reads are cheap cached GETs.
+ */
+export const DEFAULT_VERIFY_DELAYS_MS = [10_000, 10_000, 10_000, 10_000, 10_000, 10_000];
 const PARK_MS = 12 * 60 * 60 * 1000;
+const STATUS_RETRY_MS = 5_000;
 
 const severity: Record<PollOutcome, number> = { ok: 0, failed: 1, rateLimited: 2, fatal: 3 };
 
@@ -123,6 +129,11 @@ export class VehicleController {
    * Remote Start first prepares the vehicle (see prepareForStart) when enabled.
    */
   async command(command: VehicleCommand): Promise<void> {
+    if (this.pending === command) {
+      // A repeated tap or Siri retry: the running attempt already answers it.
+      this.log.debug(`Ignoring a repeated ${command}: it is already in progress.`);
+      return;
+    }
     if (this.pending) {
       this.log.warn(`Ignoring ${command}: ${this.pending} is still in progress.`);
       this.listener.commandFailed(command, 'another command is in progress');
@@ -150,8 +161,8 @@ export class VehicleController {
   }
 
   /**
-   * Sends one command and confirms it from the vehicle's next reports (three
-   * reads, 10 seconds apart). Returns undefined when confirmed, else why not.
+   * Sends one command and confirms it from the vehicle's next reports (see
+   * DEFAULT_VERIFY_DELAYS_MS). Returns undefined when confirmed, else why not.
    * `last` is true for the user's own command: it then ends the pending state
    * before the final state is published so HomeKit settles on what was reported.
    */
@@ -169,6 +180,7 @@ export class VehicleController {
       }
       this.emit();
     };
+    let readError: unknown;
     for (const delay of this.delays) {
       await this.sleep(delay);
       try {
@@ -177,16 +189,27 @@ export class VehicleController {
         } else {
           this.state.running = await this.api.readRunning(this.vin, this.generation, this.electricLike);
         }
+        readError = undefined;
       } catch (error) {
-        this.log.warn(`Could not confirm ${command}: ${describe(error)}`);
-        settle();
-        return describe(error);
+        // One failed read (Toyota answers 500/503 in bursts) should not abandon
+        // an accepted command; a rate limit or sign-in problem should.
+        readError = error;
+        if (classifyError(error) !== 'failed') {
+          break;
+        }
+        this.log.debug(`Read while confirming ${command} failed; trying again: ${describe(error)}`);
+        continue;
       }
       if (this.confirmed(command)) {
         settle();
         this.log.info(`${command} confirmed.`);
         return undefined;
       }
+    }
+    if (readError !== undefined) {
+      this.log.warn(`Could not confirm ${command}: ${describe(readError)}`);
+      settle();
+      return describe(readError);
     }
     this.log.warn(`${command} was accepted but the vehicle has not reported the change yet; showing its last report.`);
     settle();
@@ -201,7 +224,7 @@ export class VehicleController {
    */
   private async prepareForStart(capabilities: PrepareCapabilities): Promise<string | undefined> {
     try {
-      this.state.status = await this.api.readStatus(this.vin, this.generation);
+      this.state.status = await this.readStatusRetryingOnce();
     } catch (error) {
       return `could not read the vehicle status first (${describe(error)})`;
     }
@@ -261,6 +284,20 @@ export class VehicleController {
       }
     }
     return undefined;
+  }
+
+  /** A transient 500/503 gets one more try after a short pause; anything else fails at once. */
+  private async readStatusRetryingOnce(): Promise<RemoteStatus> {
+    try {
+      return await this.api.readStatus(this.vin, this.generation);
+    } catch (error) {
+      if (classifyError(error) !== 'failed') {
+        throw error;
+      }
+      this.log.debug(`Status read failed; trying once more: ${describe(error)}`);
+      await this.sleep(STATUS_RETRY_MS);
+      return this.api.readStatus(this.vin, this.generation);
+    }
   }
 
   private confirmed(command: VehicleCommand): boolean {

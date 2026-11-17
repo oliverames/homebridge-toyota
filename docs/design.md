@@ -21,7 +21,7 @@ HomeKit has no remote-start, ignition or preconditioning type. A `Switch` is the
 
 Remote start with the car unlocked or a window down is easy to do by accident, so by default (`remoteStart.prepare`, on) the controller prepares the vehicle before it sends the start. It reads status and then walks four checks in order: (1) refuse if a door, the hood or the hatch is open; (2) `door-lock` when a door reports unlocked; (3) `power-window-close` for an open window and `sunroof-close` for an open moonroof; (4) `trunk-lock` when the hatch reports an unlocked token. Every step is decided from the latest status, so a satisfied step is skipped and a second run sends nothing new. The open-opening check runs again before each step.
 
-Each command is confirmed the way a lock is (up to three status reads at 10 second intervals, `sendAndConfirm` in `controller.ts`). A refused command, a failed or rate limited read, or a command Toyota accepts that the report never shows, abandons the start with the reason, and the switch returns to off. There are no retries.
+Each command is confirmed the way a lock is (up to six status reads at 10 second intervals, `sendAndConfirm` in `controller.ts`). A refused command, a rate limited read, a read that is still failing at the end of the window, or a command Toyota accepts that the report never shows, abandons the start with the reason, and the switch returns to off. A single 500 or 503 does not: the first status read gets one retry after 5 seconds, and a failed confirmation read is followed by the next one. Commands themselves are never resent.
 
 Capability gating copies RedLink (`ToyotaCommandAvailability` and `supportStatus`): the commands are not offered on 17CY, a step needs an enabled capability name whose words match (`powerWindowCapable`, `moonRoofCapable`, `trunkLockUnlockCapable`, never a negated name), and every bZ is treated as having no remote moonroof command. A vehicle that does not report the capability keeps its window open or hatch unlocked, the log says so, and the start still goes ahead. Two behaviours are the plugin's own choice and not verified: the hatch lock is read from a lock token in the hatch's status section (`parse.ts` now reads it for the trunk kind while `doorsLocked` still counts doors only), so a vehicle that never reports one gets no `trunk-lock`; and preparation relies on Toyota's cached report, because the plugin never wakes the vehicle.
 
@@ -47,7 +47,9 @@ Ported from `ToyotaAuthService`:
 4. Exchange the code at `access_token` (client `oneappsdkclient`, PKCE method `plain`).
 5. Validate the `id_token` (algorithm not `none`, audience `oneappsdkclient`, not expired) and use `sub` as the GUID. The signature is not verified, matching RedLink; only the TLS response from Toyota is trusted.
 
-Refresh tokens are single use. The client therefore refreshes inside one in-flight promise, persists the rotated session before using it, refreshes proactively when 5 minutes remain, and on a 401 or 403 refreshes once and retries once. If the saved refresh token is rejected (`invalid_grant`) it falls back to a full sign-in. A 403 that survives a fresh refresh is reported as a probable client key rotation, because a refreshed token proves the login is fine.
+Refresh tokens are single use. The client therefore refreshes inside one in-flight promise, persists the rotated session before using it, refreshes proactively when 5 minutes remain, and on a 401 or 403 refreshes once and retries once. If the saved refresh token is rejected (`invalid_grant`) it falls back to a full sign-in.
+
+Toyota also answers 403 while its gateway is unhealthy (seen 2026-11-16 and 2026-11-17, alongside 500s and 503s), and every forced refresh is a request to the sign-in server, which answers 429 when it gets too many. So a 401 or 403 forces a refresh at most once every 5 minutes; inside that window the error is returned as is and the poller backs off. A 403 that survives a fresh refresh is reported as a probable client key rotation only after three such requests in a row, because a refreshed token proves the login is fine but one refusal does not prove the key is wrong. The settings page makes a single check, so it reports the key on the first such refusal.
 
 ### One-time passcode
 
@@ -84,11 +86,11 @@ Toyota's OneApp public client key (`X-API-KEY`) rotates every few months. It is 
 A HomeKit set handler has only a few seconds, but Toyota commands are asynchronous. The handler returns at once and the command runs in the background:
 
 1. `POST` the command (REST `v1/global/remote/command` for 17CYPLUS and 21MM, the legacy `code/value` body for 17CY, AppSync `SendRemoteCommand` for 24MM).
-2. Re-read cached status up to three times at 10 second intervals, the cadence OneApp uses.
+2. Re-read cached status up to six times at 10 second intervals. OneApp reads three times, but a 21MM bZ took 31 seconds to report a lock on 2026-11-16 and 40 seconds or more on 2026-11-17, and an unconfirmed lock abandons Remote Start. A transient 500 or 503 on one read moves on to the next read; a 429 or sign-in failure stops reading.
    When Toyota refuses a command with an HTTP error, the reason in the body (`message`, `errors[].message`, `status.messages[]` and similar, as in RedLink's `serverDetail`) is added to the error and logged with tokens, long opaque strings and VINs removed (`src/redact.ts`). A generic body with no reason adds nothing. At debug level the plugin also logs the header names and redacted body of every non-GET request, so a refused command can be compared with RedLink's.
-3. If the report matches, HomeKit settles. If not, or if a read fails, the target returns to the reported state and a warning is logged. The lock does not claim to be locked on the strength of an accepted request.
+3. If the report matches, HomeKit settles. If not, or if reads are still failing, the target returns to the reported state and a warning is logged. The lock does not claim to be locked on the strength of an accepted request.
 
-One command runs at a time. A rejection carried in an HTTP 200 body (for example `VEHICLE_MOVING`) is surfaced using RedLink's success-code rules: Toyota's success codes are not a closed set, so an unknown code counts as failure only when no accompanying text says it succeeded.
+One command runs at a time. A repeat of the command already running (a second tap, or Siri retrying) is absorbed quietly; a different command is refused and its target returns to the reported state. A rejection carried in an HTTP 200 body (for example `VEHICLE_MOVING`) is surfaced using RedLink's success-code rules: Toyota's success codes are not a closed set, so an unknown code counts as failure only when no accompanying text says it succeeded.
 
 ## Subscriptions and capabilities
 

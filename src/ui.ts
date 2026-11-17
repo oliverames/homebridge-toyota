@@ -228,7 +228,7 @@ export class SignInService {
     this.oldChallengeFile.clear();
     let message = 'Signed in. The plugin picks up the new session on its next update; no restart needed.';
     try {
-      const client = new ToyotaClient(config, auth, this.sessions, this.options.fetchFn, SILENT, this.now);
+      const client = new ToyotaClient(config, auth, this.sessions, this.options.fetchFn, SILENT, this.now, { keyRejectionThreshold: 1 });
       const vehicles = (await new ToyotaVehicleApi(client).listVehicles()).filter((v) => !config.vin || v.vin.toUpperCase() === config.vin);
       this.statusFile.save({ vehicleCount: vehicles.length, checkedAt: this.now() });
     } catch (error) {

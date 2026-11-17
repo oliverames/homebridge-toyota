@@ -31,11 +31,15 @@ export class OperationRejectedError extends Error {
   }
 }
 
-/** A second 403 right after a successful token refresh points at the client key, not the login. */
+/**
+ * 403s that keep surviving successful token refreshes point at the client key,
+ * not the login. A single one does not: Toyota also answers 403 while its
+ * gateway is unhealthy.
+ */
 export class ClientKeyRejectedError extends Error {
   constructor() {
     super(
-      'Toyota rejected every request after a fresh sign-in. The "apiKey" client key has most likely been rotated; update it in the plugin config.',
+      'Toyota kept rejecting requests even with a freshly refreshed sign-in. The "apiKey" client key has most likely been rotated; update it in the plugin config.',
     );
   }
 }
@@ -213,11 +217,27 @@ export interface ClientLogger {
   warn(message: string, ...args: unknown[]): void;
 }
 
+/** Minimum gap between refreshes forced by a 401/403. */
+export const FORCED_REFRESH_COOLDOWN_MS = 5 * 60 * 1000;
+/** Consecutive refreshed-and-still-refused requests before the client key is blamed. */
+export const KEY_REJECTION_THRESHOLD = 3;
+
+export interface ClientOptions {
+  forcedRefreshCooldownMs?: number;
+  /** 1 for a one-shot check (the settings page), where there is no later request to wait for. */
+  keyRejectionThreshold?: number;
+}
+
 export class ToyotaClient {
   private session?: Session;
   private inflight?: Promise<Session>;
   /** mtime of the session file as this client last read or wrote it. */
   private seenMtime?: number;
+  private lastForcedRefreshAt?: number;
+  /** Consecutive requests refused even with a freshly refreshed token. */
+  private keyRejections = 0;
+  private readonly forcedRefreshCooldownMs: number;
+  private readonly keyRejectionThreshold: number;
 
   constructor(
     private readonly config: ToyotaConfig,
@@ -226,7 +246,11 @@ export class ToyotaClient {
     private readonly fetchFn: FetchFn,
     private readonly log: ClientLogger,
     private readonly now: () => number = Date.now,
-  ) {}
+    options: ClientOptions = {},
+  ) {
+    this.forcedRefreshCooldownMs = options.forcedRefreshCooldownMs ?? FORCED_REFRESH_COOLDOWN_MS;
+    this.keyRejectionThreshold = options.keyRejectionThreshold ?? KEY_REJECTION_THRESHOLD;
+  }
 
   /** Returns a usable session, refreshing or signing in at most once at a time. */
   async ensureSession(forceRefresh = false): Promise<Session> {
@@ -295,20 +319,41 @@ export class ToyotaClient {
 
   /** One request, with a single refresh-and-retry on 401/403. */
   async send(makeRoute: (session: Session) => Route, vin: string, generation: Generation): Promise<Envelope> {
-    let session = await this.ensureSession();
+    return this.withAuthRetry((session) => this.sendOnce(makeRoute(session), session, vin, generation));
+  }
+
+  /**
+   * Runs a request; on 401/403 refreshes the token once and retries once.
+   * Toyota answers transient 403s while its gateway is unhealthy, so forced
+   * refreshes are rate limited (each one hits the sign-in server, which answers
+   * 429 when hammered), and a 403 that survives a fresh token is only blamed on
+   * the client key after it has happened several times in a row.
+   */
+  private async withAuthRetry<T>(run: (session: Session) => Promise<T>): Promise<T> {
     try {
-      return await this.sendOnce(makeRoute(session), session, vin, generation);
+      const result = await run(await this.ensureSession());
+      this.keyRejections = 0;
+      return result;
     } catch (error) {
       if (!(error instanceof ApiHttpError) || !error.isAuthFailure) {
         throw error;
       }
+      if (this.lastForcedRefreshAt !== undefined && this.now() - this.lastForcedRefreshAt < this.forcedRefreshCooldownMs) {
+        this.log.debug(`Toyota answered HTTP ${error.status}; the token was refreshed moments ago, so not refreshing again yet.`);
+        throw error;
+      }
     }
-    session = await this.ensureSession(true);
+    this.lastForcedRefreshAt = this.now();
     try {
-      return await this.sendOnce(makeRoute(session), session, vin, generation);
+      const result = await run(await this.ensureSession(true));
+      this.keyRejections = 0;
+      return result;
     } catch (error) {
       if (error instanceof ApiHttpError && error.isAuthFailure) {
-        throw new ClientKeyRejectedError();
+        this.keyRejections++;
+        if (this.keyRejections >= this.keyRejectionThreshold) {
+          throw new ClientKeyRejectedError();
+        }
       }
       throw error;
     }
@@ -399,21 +444,7 @@ export class ToyotaClient {
       }
       return envelope;
     };
-    try {
-      return await run(await this.ensureSession());
-    } catch (error) {
-      if (!(error instanceof ApiHttpError) || !error.isAuthFailure) {
-        throw error;
-      }
-    }
-    try {
-      return await run(await this.ensureSession(true));
-    } catch (error) {
-      if (error instanceof ApiHttpError && error.isAuthFailure) {
-        throw new ClientKeyRejectedError();
-      }
-      throw error;
-    }
+    return this.withAuthRetry(run);
   }
 }
 

@@ -129,13 +129,13 @@ describe('lock command', () => {
     expect(controller.commandPending).toBe(false);
   });
 
-  it('polls at most three times, then tells HomeKit to fall back to the reported state', async () => {
+  it('polls six times over a minute, then tells HomeKit to fall back to the reported state', async () => {
     const api = new FakeApi();
     api.statuses = [locked];
     const { controller, events, sleeps } = setup(api);
     await controller.command('unlock');
-    expect(sleeps).toEqual([10_000, 10_000, 10_000]);
-    expect(api.statusReads).toBe(3);
+    expect(sleeps).toEqual(Array(6).fill(10_000));
+    expect(api.statusReads).toBe(6);
     expect(events).toEqual(['failed:unlock:not confirmed by the vehicle yet']);
     expect(controller.state.status?.doorsLocked).toBe(true);
   });
@@ -157,6 +157,29 @@ describe('lock command', () => {
     await controller.command('unlock');
     expect(api.statusReads).toBe(1);
     expect(events).toHaveLength(1);
+  });
+
+  it('keeps confirming through a transient 503 instead of abandoning the command', async () => {
+    const api = new FakeApi();
+    api.statuses = [new ApiHttpError(503, ''), unlocked];
+    const { controller, events } = setup(api);
+    await controller.command('unlock');
+    expect(api.statusReads).toBe(2);
+    expect(events).toEqual([]);
+    expect(controller.state.status?.doorsLocked).toBe(false);
+  });
+
+  it('quietly absorbs a repeat of the command already in flight (a second tap or Siri retry)', async () => {
+    const api = new FakeApi();
+    api.statuses = [locked, unlocked];
+    const { controller, events } = setup(api);
+    const first = controller.command('unlock');
+    await controller.command('unlock');
+    await controller.command('unlock');
+    await first;
+    expect(api.sent).toEqual(['unlock']);
+    expect(events).toEqual([]);
+    expect(api.statusReads).toBe(2);
   });
 
   it('refuses a second command while one is in flight', async () => {

@@ -118,7 +118,7 @@ Set `remoteStart.prepare` to `false` to start immediately instead. Toyota allows
 
 ### The client key
 
-Toyota rotates the OneApp client key every few months. When it does, sign-in still works but every request returns `APIGW-403`, and the log says the key has most likely been rotated. The current value can be read from the Toyota OneApp Android APK (decompile it with a tool such as jadx and look at `NetworkDataProviderIml.apiKey()`). Paste it into `apiKey` and restart the child bridge. No plugin release is needed.
+Toyota rotates the OneApp client key every few months. When it does, sign-in still works but every request returns `APIGW-403`. Once that has survived three fresh sign-ins in a row (a single 403 can be a passing Toyota outage), the log says the key has most likely been rotated. The current value can be read from the Toyota OneApp Android APK (decompile it with a tool such as jadx and look at `NetworkDataProviderIml.apiKey()`). Paste it into `apiKey` and restart the child bridge. No plugin release is needed.
 
 ### Signing in
 
