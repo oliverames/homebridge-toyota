@@ -99,10 +99,25 @@ describe('poll', () => {
     expect(controller.state.electric).toBeUndefined();
   });
 
-  it('a rotated client key on the EV endpoint is parked too, while status still reports the key problem', async () => {
+  it('a rotated client key on the EV endpoint is not counted as a poll failure, while status still reports the key problem', async () => {
     const api = new FakeApi();
     api.electric = new ClientKeyRejectedError();
     expect(await setup(api).controller.poll()).toBe('ok');
+  });
+
+  it('parks the EV endpoint only after three 403s in a row, since Toyota also answers 403 during outages', async () => {
+    const api = new FakeApi();
+    api.electric = new ApiHttpError(403, '');
+    const { controller } = setup(api, { now: () => 0 });
+    await controller.poll();
+    await controller.poll();
+    api.electric = { batteryPercent: 50, charging: false };
+    await controller.poll();
+    expect(controller.state.electric?.batteryPercent).toBe(50);
+    api.electric = new ApiHttpError(403, '');
+    for (let i = 0; i < 4; i++) await controller.poll();
+    // Reads 1-2 refused, 3 ok (resets), 4-6 refused and parked, 7 skipped.
+    expect(api.electricReads).toBe(6);
   });
 
   it('skips EV reads when battery is disabled and engine reads unless remote start is enabled', async () => {

@@ -56,7 +56,7 @@ Requires Homebridge `^1.8.0 || ^2.0.0`, Node `^22 || ^24`, and a Toyota North Am
 Install the latest release where Homebridge runs:
 
 ```sh
-npm install -g https://github.com/oliverames/homebridge-toyota/releases/download/v0.3.2/homebridge-toyota-0.3.2.tgz
+npm install -g https://github.com/oliverames/homebridge-toyota/releases/download/v0.3.4/homebridge-toyota-0.3.4.tgz
 ```
 
 Then add the platform in the Homebridge UI, or in `config.json`:

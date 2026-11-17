@@ -44,6 +44,7 @@ export interface ControllerOptions {
 export const DEFAULT_VERIFY_DELAYS_MS = [10_000, 10_000, 10_000, 10_000, 10_000, 10_000];
 const PARK_MS = 12 * 60 * 60 * 1000;
 const STATUS_RETRY_MS = 5_000;
+const FORBIDDEN_BEFORE_PARK = 3;
 
 const severity: Record<PollOutcome, number> = { ok: 0, failed: 1, rateLimited: 2, fatal: 3 };
 
@@ -51,6 +52,8 @@ export class VehicleController {
   readonly state: VehicleState = {};
   private pending?: VehicleCommand;
   private electricParkedUntil = 0;
+  /** Consecutive 403s from the EV endpoint; one alone can be a passing outage. */
+  private electricRefusals = 0;
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly delays: number[];
@@ -100,10 +103,15 @@ export class VehicleController {
     if (this.options.exposeBattery && this.now() >= this.electricParkedUntil) {
       try {
         this.state.electric = await this.api.readElectric(this.vin, this.generation);
+        this.electricRefusals = 0;
       } catch (error) {
-        if (isEndpointRefusal(error)) {
+        const refusal = endpointRefusal(error);
+        if (refusal === 'permanent' || (refusal === 'forbidden' && ++this.electricRefusals >= FORBIDDEN_BEFORE_PARK)) {
           this.electricParkedUntil = this.now() + PARK_MS;
+          this.electricRefusals = 0;
           this.log.debug('EV status is not available for this vehicle; not asking again for 12 hours.');
+        } else if (refusal === 'forbidden') {
+          this.log.debug(`EV status read refused (${describe(error)}); not parking it yet, since Toyota also answers 403 during outages.`);
         } else {
           note(error, 'EV status read');
         }
@@ -341,11 +349,15 @@ function readsStatus(command: VehicleCommand): boolean {
   return command !== 'remoteStart' && command !== 'remoteStop';
 }
 
-function isEndpointRefusal(error: unknown): boolean {
-  return (
-    error instanceof ClientKeyRejectedError ||
-    (error instanceof ApiHttpError && (error.status === 400 || error.status === 403 || error.status === 404))
-  );
+/** 400 and 404 describe the endpoint itself; a 403 only does when it keeps happening. */
+function endpointRefusal(error: unknown): 'permanent' | 'forbidden' | undefined {
+  if (error instanceof ApiHttpError && (error.status === 400 || error.status === 404)) {
+    return 'permanent';
+  }
+  if (error instanceof ClientKeyRejectedError || (error instanceof ApiHttpError && error.status === 403)) {
+    return 'forbidden';
+  }
+  return undefined;
 }
 
 export function describe(error: unknown): string {

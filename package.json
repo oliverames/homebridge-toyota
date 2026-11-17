@@ -1,7 +1,7 @@
 {
   "name": "homebridge-toyota",
   "displayName": "Homebridge Toyota",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Native HomeKit lock, door sensors and EV battery for Toyota North America vehicles via Toyota Connected Services.",
   "author": "Oliver Ames",
   "license": "MIT",

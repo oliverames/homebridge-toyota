@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.4 - 2026-11-17
+
+- The EV battery read is parked for 12 hours only after three 403s in a row (a 400 or 404 still parks it at once). One 403 during a Toyota outage used to hide the battery for 12 hours.
+
 ## 0.3.3 - 2026-11-17
 
 Fixes for the failures logged on 2026-11-16 and 2026-11-17, when Toyota answered 500, 503, 403 and 429 in bursts.
