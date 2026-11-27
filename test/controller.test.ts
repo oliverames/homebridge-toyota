@@ -316,18 +316,29 @@ describe('fresh report requests', () => {
 describe('Home app wakes and activity', () => {
   const MIN = 60_000;
   const NOW = Date.parse('2026-11-27T22:00:00Z');
-  function interest(ageMs: number) {
+  function interest(ageMs: number, startedAgoMs = 10 * MIN) {
     const api = new FakeApi();
     api.statuses = [{ openings: [], doorsLocked: true, reportedAt: 't', reportedAtMs: NOW - ageMs }];
-    let now = NOW;
+    let now = NOW - startedAgoMs;
     let activity = 0;
     const controller = new VehicleController(
       'VIN', '21MM', api,
       { remoteStart: false, exposeBattery: false, interestWakeMs: 15 * MIN, wakeWaitDelaysMs: [0], verifyDelaysMs: [0], now: () => now, sleep: async () => {}, onActivity: () => { activity++; } },
       { stateChanged() {}, commandFailed() {} }, noop,
     );
+    now = NOW;
     return { api, controller, advance: (ms: number) => { now += ms; }, activity: () => activity };
   }
+
+  it('ignores Home hub reads right after a restart', async () => {
+    const t = interest(60 * MIN, 30_000);
+    await t.controller.poll();
+    t.controller.noteInterest();
+    expect(t.api.refreshes).toBe(0);
+    t.advance(2 * MIN);
+    t.controller.noteInterest();
+    await vi.waitFor(() => expect(t.api.refreshes).toBe(1));
+  });
 
   it('opening the car in the Home app wakes it when the report is 15 minutes old, not when it is newer', async () => {
     const fresh = interest(5 * MIN);

@@ -57,3 +57,16 @@ export function validatedPayload(token: string, expectedAudience: string, nowMs 
   }
   return { sub, aud, exp };
 }
+
+/**
+ * The `exp` of a token, in epoch ms, without validating anything. Used only to
+ * show how long a sign-in lasts; never to trust a token.
+ */
+export function expiryMs(token: string): number | undefined {
+  try {
+    const exp = decodePart(token.split('.')[1])['exp'];
+    return typeof exp === 'number' && Number.isFinite(exp) ? exp * 1000 : undefined;
+  } catch {
+    return undefined;
+  }
+}

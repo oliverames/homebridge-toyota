@@ -20,6 +20,10 @@ export class ApiHttpError extends Error {
   get isRateLimited(): boolean {
     return this.status === 429;
   }
+  /** Toyota said the access token itself has expired: a definite answer, not a gateway outage. */
+  get isTokenExpired(): boolean {
+    return this.isAuthFailure && /jwt expired|token (has )?expired|expired token/i.test(this.body);
+  }
 }
 
 export class OperationRejectedError extends Error {
@@ -360,7 +364,8 @@ export class ToyotaClient {
       if (!(error instanceof ApiHttpError) || !error.isAuthFailure) {
         throw error;
       }
-      if (this.lastForcedRefreshAt !== undefined && this.now() - this.lastForcedRefreshAt < this.forcedRefreshCooldownMs) {
+      // The cooldown protects the sign-in server from outage 403s; an expired token always gets a refresh.
+      if (!error.isTokenExpired && this.lastForcedRefreshAt !== undefined && this.now() - this.lastForcedRefreshAt < this.forcedRefreshCooldownMs) {
         this.log.debug(`Toyota answered HTTP ${error.status}; the token was refreshed moments ago, so not refreshing again yet.`);
         throw error;
       }

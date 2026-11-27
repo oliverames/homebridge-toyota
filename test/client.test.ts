@@ -143,6 +143,26 @@ describe('ToyotaClient token handling', () => {
       expect(net.calls.filter((c) => c.url === ACCESS_TOKEN_URL)).toHaveLength(2);
     });
 
+    // 2026-11-25: Toyota answered "403: jwt expired" and the poll failed instead of refreshing.
+    it('an explicit "jwt expired" refreshes even inside the cooldown, and the retry succeeds', async () => {
+      const store = makeStore();
+      store.save(fresh);
+      const clock = { now: NOW };
+      let apiCalls = 0;
+      const net = mockFetch((url) => {
+        if (url === ACCESS_TOKEN_URL) return jsonResponse(tokenBody(clock.now));
+        apiCalls++;
+        if (apiCalls <= 2) return new Response('{"responseCode":"APIGW-403"}', { status: 403 });
+        if (apiCalls === 3) return new Response('{"message":"jwt expired"}', { status: 403 });
+        return jsonResponse({ status: 'SUCCESS', payload: [] });
+      });
+      const client = new ToyotaClient(config, new ToyotaAuth(net.fn, undefined, () => clock.now), store, net.fn, quiet, () => clock.now);
+      await client.send(() => routes.vehicles(), 'V', '21MM').catch(() => {});
+      clock.now += 60_000;
+      await expect(client.send(() => routes.vehicles(), 'V', '21MM')).resolves.toBeDefined();
+      expect(net.calls.filter((c) => c.url === ACCESS_TOKEN_URL)).toHaveLength(2);
+    });
+
     it('are blamed on the key at once by a one-shot check such as the settings page', async () => {
       const store = makeStore();
       store.save(fresh);

@@ -14,6 +14,7 @@ import {
   type FetchFn,
 } from './auth';
 import { ApiHttpError, ClientKeyRejectedError, OperationRejectedError, ToyotaClient } from './client';
+import { expiryMs } from './jwt';
 import { parseConfig, type ToyotaConfig } from './config';
 import { FileStore, isSession, type Session } from './session';
 import { PLATFORM_NAME } from './settings';
@@ -38,6 +39,11 @@ export interface UiStatus {
   vehicleCount?: number;
   /** When the session file was last written (sign-in or token refresh), epoch ms. */
   sessionUpdatedAt?: number;
+  /**
+   * When the saved sign-in stops working if it is never refreshed, epoch ms
+   * (the refresh token's own expiry; Toyota's run 90 days and renew on every refresh).
+   */
+  signInValidUntil?: number;
   codePending: boolean;
   /** Assumed expiry of the pending code, epoch ms. */
   codeExpiresAt?: number;
@@ -140,6 +146,7 @@ export class SignInService {
       account: session?.username,
       vehicleCount: signedIn ? this.statusFile.load()?.vehicleCount : undefined,
       sessionUpdatedAt: session ? this.sessions.mtimeMs() : undefined,
+      signInValidUntil: session ? expiryMs(session.refreshToken) : undefined,
       codePending: pending !== undefined,
       codeExpiresAt: pending ? pending.savedAt + CHALLENGE_TTL_MS : undefined,
       message,

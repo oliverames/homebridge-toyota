@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.1 - 2026-11-27
+
+- A "jwt expired" answer from Toyota always refreshes the token, even inside the 5-minute forced-refresh cooldown, which exists for outage 403s. On 2026-11-25 such an answer failed the poll instead.
+- The settings page shows how long the saved sign-in lasts if it is never refreshed (the refresh token's own expiry; Toyota's run 90 days and renew on every refresh).
+- Home hub reads in the first two minutes after a start no longer count as someone opening the Home app, so a restart does not spend a fresh-report request.
+
 ## 0.4.0 - 2026-11-27
 
 HomeKit

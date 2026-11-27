@@ -43,6 +43,12 @@
         }
         if (s.sessionUpdatedAt) text += ', session updated ' + ago(s.sessionUpdatedAt);
         text += '.';
+        if (s.signInValidUntil) {
+          var days = Math.round((s.signInValidUntil - Date.now()) / 86400000);
+          text += days > 0
+            ? ' The sign-in renews itself while Homebridge runs; without a refresh it would last ' + days + ' more days.'
+            : ' The saved sign-in has expired; sign in again.';
+        }
       } else {
         text = s.configured ? 'Not signed in.' : 'Not signed in. Save your Toyota settings first.';
       }

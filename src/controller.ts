@@ -69,6 +69,11 @@ export interface WakeStore {
 export const DEFAULT_VERIFY_DELAYS_MS = [10_000, 10_000, 10_000, 10_000, 10_000, 10_000];
 /** At most this many Home-app wakes in any 24 hours, in case a home hub reads the lock on its own. */
 export const MAX_INTEREST_WAKES_PER_DAY = 8;
+/**
+ * Home hubs read every characteristic when they reconnect, which they do right
+ * after a bridge restart (seen 2026-11-27). Those reads are not a person looking.
+ */
+export const INTEREST_IGNORED_AFTER_START_MS = 2 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** A parked car takes a while to wake and upload; about two minutes, then the next poll picks it up. */
 export const DEFAULT_WAKE_WAIT_DELAYS_MS = [20_000, 20_000, 20_000, 30_000, 30_000];
@@ -92,6 +97,7 @@ export class VehicleController {
   private waking = false;
   private interestWakes: number[] = [];
   private autoLockState?: AutoLockState;
+  private readonly startedAt: number;
   private autoLockReason?: string;
 
   constructor(
@@ -105,6 +111,7 @@ export class VehicleController {
     this.now = options.now ?? Date.now;
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.delays = options.verifyDelaysMs ?? DEFAULT_VERIFY_DELAYS_MS;
+    this.startedAt = this.now();
   }
 
   get commandPending(): boolean {
@@ -199,10 +206,10 @@ export class VehicleController {
    */
   noteInterest(): void {
     const minimumMs = this.options.interestWakeMs ?? 0;
-    if (minimumMs <= 0 || !this.wakeAllowed(minimumMs)) {
+    const now = this.now();
+    if (minimumMs <= 0 || now - this.startedAt < INTEREST_IGNORED_AFTER_START_MS || !this.wakeAllowed(minimumMs)) {
       return;
     }
-    const now = this.now();
     this.interestWakes = this.interestWakes.filter((t) => now - t < DAY_MS);
     if (this.interestWakes.length >= MAX_INTEREST_WAKES_PER_DAY) {
       return;

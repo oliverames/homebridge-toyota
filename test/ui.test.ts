@@ -204,6 +204,18 @@ describe('SignInService', () => {
     expect(text).not.toMatch(/guid-1234|deviceId/);
   });
 
+  it('shows how long the saved sign-in lasts, from the refresh token expiry, and nothing of the token itself', () => {
+    const ws = workspace();
+    const exp = Math.floor(NOW / 1000) + 90 * 86400;
+    const refresh = `x.${Buffer.from(JSON.stringify({ exp })).toString('base64url')}.sig`;
+    new FileStore(join(ws.storagePath, 'homebridge-toyota', 'session.json'), isSession).save({
+      accessToken: 'tok', refreshToken: refresh, idToken: 'id', expiresAt: NOW + 1_800_000, guid: 'g', deviceId: 'd', username: EMAIL,
+    });
+    const status = service(ws, toyota()).status();
+    expect(status.signInValidUntil).toBe(exp * 1000);
+    expect(JSON.stringify(status)).not.toContain(refresh);
+  });
+
   it('still signs in when the vehicle lookup fails', async () => {
     const ws = workspace();
     const base = toyota({ otp: false });
