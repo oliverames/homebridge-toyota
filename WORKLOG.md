@@ -6,7 +6,7 @@
 
 **Verified**: 189 tests, lint, typecheck and build pass locally. Live: 0.4.1 running, the restart spent no wake, the bZ reports all closed and locked (22:50:41Z), the settings status reads signed in with 90 days left. All 9 child bridges and the UI (200) ran after the permission change.
 
-**Left off at**: Not yet exercised live: an auto-lock attempt (the car has been locked since 22:50Z), a Home-app wake from a person, minute polling after a command, a Hatch lock or unlock, `StatusFault` display. Open with Oliver: enabling 2FA on the Homebridge UI, and whether to file upstream issues for the Nest and LG crashes.
+**Left off at**: Not yet exercised live: an auto-lock attempt (the car has been locked since 22:50Z), a Home-app wake from a person, minute polling after a command, a Hatch lock or unlock, `StatusFault` display. Oliver chose to fix the Nest and LG crashes directly: both installed plugins were patched in place with try/catch (originals and README in `~/.homebridge/backups/plugin-patches-2026-11-27/`; still unfixed in nest 4.6.11 and lgwebos 4.11.1) and both bridges restarted cleanly at 18:04. Open: 2FA on the Homebridge UI (Oliver's action).
 
 ---
 
