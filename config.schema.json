@@ -120,6 +120,12 @@
           }
         }
       },
+      "debug": {
+        "title": "Detailed logging",
+        "description": "Show this plugin's debug lines (every request with its status and timing, token refreshes, each update's summary, auto-lock reasoning) in the normal log, marked [debug]. No passwords, tokens, keys or full VINs are ever logged.",
+        "type": "boolean",
+        "default": false
+      },
       "graphqlApiKey": {
         "title": "AppSync key (24MM only)",
         "description": "Needed only for remote commands on 24MM vehicles.",
@@ -149,7 +155,7 @@
       "title": "Advanced",
       "expandable": true,
       "expanded": false,
-      "items": ["vin", "generation", "pollIntervalMinutes", "wakeOnHomeAppOpen", "staleReportHours", "graphqlApiKey", "appVersion"]
+      "items": ["vin", "generation", "pollIntervalMinutes", "wakeOnHomeAppOpen", "staleReportHours", "graphqlApiKey", "appVersion", "debug"]
     }
   ]
 }

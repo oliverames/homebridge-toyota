@@ -39,6 +39,14 @@ Every service carries the vehicle's name (Toyota nickname, else the accessory na
 
 HomeKit shows No Response (`SERVICE_COMMUNICATION_FAILURE`) in two cases only: while sign-in needs attention (a `fatal` poll outcome), and on a cached accessory before the first vehicle list, where writes would otherwise be accepted with no handler behind them. Ordinary outages keep last-known values, and the 12-hour freshness rule marks locks Unknown and contact sensors with `StatusFault`.
 
+### Logging (0.4.2)
+
+Info level, always on: the startup settings summary (no credentials), the first report's openings, every lock state change with the car's report time, each opening opened or closed, charging started or stopped, the engine or climate turning on or off, every HomeKit request ("HomeKit asked to lock the doors"), each command's acceptance and confirmation time, fresh-report requests and their result, auto-lock attempts, full sign-ins, a sign-in picked up from the settings page, and outage start and recovery.
+
+Debug level: every Toyota request with method, path, status and duration (network failures by kind, such as `timed out` or `TypeError (ENOTFOUND)`), each token refresh with the remaining access and sign-in lifetime, a one-line summary after every update (doors, open items, report age, battery, engine), command requests, auto-lock's reason for not locking, backoff and fast-polling decisions, and HomeKit requests answered No Response. The `debug` setting sends these to the normal log marked `[debug]`, so they show without restarting Homebridge with `-D`.
+
+No line carries a password, client key, token, guid, device id, email or full VIN. Paths carry no VIN (it travels in a header), refusal reasons pass through `redact()`, and `test/logging.test.ts` checks a refresh, reads, a command and a refused request for every one of those values.
+
 ## Rejected options
 
 - **Fuel level as `Battery`.** A gas tank is not a battery, and `Battery` carries low-battery and charging semantics that would be false. Fuel level is never exposed. A hybrid's traction battery is not exposed either unless Toyota reports a charge level.

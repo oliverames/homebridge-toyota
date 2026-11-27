@@ -42,6 +42,10 @@ export class VehicleAccessory implements ControllerListener {
   private hatch?: Service;
   private reportedHatch = LOCK_UNKNOWN;
   private openingsLogged = false;
+  /** Last value logged per opening key, so each open or close is logged once. */
+  private readonly openingStates = new Map<string, boolean>();
+  private loggedCharging?: boolean;
+  private loggedRunning?: boolean;
   private readonly now: () => number;
   /** Toyota sign-in needs attention: HomeKit shows No Response instead of stale values. */
   private unavailable = false;
@@ -135,6 +139,7 @@ export class VehicleAccessory implements ControllerListener {
 
   private ensureAvailable(): void {
     if (this.unavailable) {
+      this.log.debug('HomeKit request answered No Response: Toyota sign-in needs attention.');
       throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
     }
   }
@@ -196,7 +201,9 @@ export class VehicleAccessory implements ControllerListener {
    */
   private dispatch(command: VehicleCommand): void {
     const controller = this.controller;
+    this.log.info(`HomeKit asked to ${REQUEST_WORDS[command]}.`);
     if (!controller) {
+      this.log.warn(`Not sent: the vehicle is not set up yet.`);
       return;
     }
     void controller.command(command).catch((error: unknown) => {
@@ -270,6 +277,12 @@ export class VehicleAccessory implements ControllerListener {
             this.accessory.getServiceById(S.ContactSensor, opening.key) ??
             this.accessory.addService(S.ContactSensor, opening.label, opening.key);
           this.name(service, opening.label);
+          const open = opening.open === true;
+          const before = this.openingStates.get(opening.key);
+          if (before !== undefined && before !== open) {
+            this.log.info(`${opening.label} reported ${open ? 'open' : 'closed'} (${status.reportedAt ?? 'no report time'}).`);
+          }
+          this.openingStates.set(opening.key, open);
           service.updateCharacteristic(C.ContactSensorState, value);
           // A position from a report too old to trust is flagged, not presented as current.
           service.updateCharacteristic(C.StatusFault, tooOld ? C.StatusFault.GENERAL_FAULT : C.StatusFault.NO_FAULT);
@@ -282,12 +295,23 @@ export class VehicleAccessory implements ControllerListener {
       if (battery) {
         const service = this.accessory.getService(S.Battery) ?? this.accessory.addService(S.Battery, 'EV Battery');
         this.name(service, 'EV Battery');
+        const charging = battery.chargingState === C.ChargingState.CHARGING;
+        if (this.loggedCharging !== undefined && this.loggedCharging !== charging) {
+          this.log.info(`EV battery ${charging ? 'started charging' : 'stopped charging'} at ${battery.level}%.`);
+        }
+        this.loggedCharging = charging;
         service.updateCharacteristic(C.BatteryLevel, battery.level);
         service.updateCharacteristic(C.StatusLowBattery, battery.lowBattery ? 1 : 0);
         service.updateCharacteristic(C.ChargingState, battery.chargingState);
       }
     }
 
+    if (state.running !== undefined) {
+      if (this.loggedRunning !== undefined && this.loggedRunning !== state.running) {
+        this.log.info(`The vehicle reports the engine or climate ${state.running ? 'running' : 'off'}.`);
+      }
+      this.loggedRunning = state.running;
+    }
     if (this.remoteSwitch && state.running !== undefined) {
       this.reportedRunning = state.running;
       if (!pending) {
@@ -296,6 +320,17 @@ export class VehicleAccessory implements ControllerListener {
     }
   }
 }
+
+const REQUEST_WORDS: Record<VehicleCommand, string> = {
+  lock: 'lock the doors',
+  unlock: 'unlock the doors',
+  remoteStart: 'start the vehicle remotely',
+  remoteStop: 'stop the remote start',
+  closeWindows: 'close the windows',
+  closeMoonroof: 'close the moonroof',
+  lockTrunk: 'lock the hatch',
+  unlockTrunk: 'unlock the hatch',
+};
 
 function asLocked(state: number): boolean | null {
   return state === LOCK_SECURED ? true : state === LOCK_UNSECURED ? false : null;

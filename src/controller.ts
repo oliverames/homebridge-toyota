@@ -179,6 +179,7 @@ export class VehicleController {
     if (worst === 'ok') {
       await this.autoLockStep(true);
     }
+    this.log.debug(`Poll ${worst}: ${this.summary()}.`);
     return worst;
   }
 
@@ -210,6 +211,7 @@ export class VehicleController {
     if (minimumMs <= 0 || now - this.startedAt < INTEREST_IGNORED_AFTER_START_MS || !this.wakeAllowed(minimumMs)) {
       return;
     }
+    this.log.debug('HomeKit read the doors and the report is old enough to ask for a fresh one.');
     this.interestWakes = this.interestWakes.filter((t) => now - t < DAY_MS);
     if (this.interestWakes.length >= MAX_INTEREST_WAKES_PER_DAY) {
       return;
@@ -383,6 +385,28 @@ export class VehicleController {
     }
   }
 
+  /** "doors locked, report 7 minutes old; EV battery 73%, not charging; engine off". */
+  private summary(): string {
+    const parts: string[] = [];
+    const status = this.state.status;
+    if (status) {
+      const lock = status.doorsLocked === true ? 'locked' : status.doorsLocked === false ? 'unlocked' : 'lock unknown';
+      const open = status.openings.filter((o) => o.open === true).map((o) => o.label);
+      const age = status.reportedAtMs === undefined ? 'no report time' : `report ${formatAge(this.now() - status.reportedAtMs)} old`;
+      parts.push(`doors ${lock}${open.length > 0 ? `, open: ${open.join(', ')}` : ''}, ${age}`);
+    } else {
+      parts.push('no status yet');
+    }
+    const electric = this.state.electric;
+    if (electric?.batteryPercent !== undefined) {
+      parts.push(`EV battery ${Math.round(electric.batteryPercent)}%${electric.charging === true ? ', charging' : electric.charging === false ? ', not charging' : ''}`);
+    }
+    if (this.state.running !== undefined) {
+      parts.push(`engine ${this.state.running ? 'running' : 'off'}`);
+    }
+    return parts.join('; ');
+  }
+
   private activity(): void {
     try {
       this.options.onActivity?.();
@@ -396,6 +420,7 @@ export class VehicleController {
    * Remote Start first prepares the vehicle (see prepareForStart) when enabled.
    */
   async command(command: VehicleCommand): Promise<void> {
+    this.log.debug(`Command ${command} requested.`);
     if (this.pending === command) {
       // A repeated tap or Siri retry: the running attempt already answers it.
       this.log.debug(`Ignoring a repeated ${command}: it is already in progress.`);
@@ -446,6 +471,7 @@ export class VehicleController {
       this.log.warn(`${command} failed: ${describe(error)}`);
       return describe(error);
     }
+    const sentAt = this.now();
     this.log.info(`${command} accepted by Toyota; waiting for the vehicle to report.`);
     const settle = (): void => {
       if (last) {
@@ -475,7 +501,7 @@ export class VehicleController {
       }
       if (this.confirmed(command)) {
         settle();
-        this.log.info(`${command} confirmed.`);
+        this.log.info(`${command} confirmed after ${Math.round((this.now() - sentAt) / 1000)} s.`);
         return undefined;
       }
     }

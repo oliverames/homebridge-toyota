@@ -10,7 +10,7 @@ import { type AutoLockStore, isAutoLockState } from './autolock';
 import { type Generation, prepareCapabilities, type VehicleSummary } from './parse';
 import { FAST_POLL_WINDOW_MS, Poller, type PollOutcome } from './poller';
 import { FileStore, isSession, type Session } from './session';
-import { PLATFORM_NAME, PLUGIN_NAME } from './settings';
+import { PLATFORM_NAME, PLUGIN_NAME, PLUGIN_VERSION } from './settings';
 import { isVehicleStatus, type VehicleStatus } from './ui';
 
 const DEFAULT_GENERATION: Generation = '21MM';
@@ -41,7 +41,7 @@ export class ToyotaPlatform implements DynamicPlatformPlugin {
   private sessionWatch?: NodeJS.Timeout;
 
   constructor(
-    private readonly log: Logging,
+    private log: Logging,
     rawConfig: PlatformConfig,
     private readonly api: API,
   ) {
@@ -53,6 +53,9 @@ export class ToyotaPlatform implements DynamicPlatformPlugin {
       return;
     }
     this.config = result.config;
+    if (result.config.debug) {
+      this.log = verboseLogger(log);
+    }
     api.on('didFinishLaunching', () => this.start());
     api.on('shutdown', () => {
       this.poller?.stop();
@@ -90,6 +93,7 @@ export class ToyotaPlatform implements DynamicPlatformPlugin {
     if (!config) {
       return;
     }
+    this.log.info(describeSettings(config));
     try {
       const dir = join(this.api.user.storagePath(), 'homebridge-toyota');
       const sessions = new FileStore<Session>(join(dir, 'session.json'), isSession);
@@ -103,7 +107,7 @@ export class ToyotaPlatform implements DynamicPlatformPlugin {
       this.client = new ToyotaClient(config, auth, sessions, fetch, this.log);
       this.statusFile = new FileStore<VehicleStatus>(join(dir, 'status.json'), isVehicleStatus);
       this.vehicleApi = new ToyotaVehicleApi(this.client);
-      this.poller = new Poller(() => this.tick(), config.pollIntervalMinutes * 60_000);
+      this.poller = new Poller(() => this.tick(), config.pollIntervalMinutes * 60_000, Math.random, Date.now, (m) => this.log.debug(m));
       this.poller.start(0);
     } catch (error) {
       this.log.error(`Toyota plugin failed to start: ${describe(error)}`);
@@ -278,4 +282,40 @@ export class ToyotaPlatform implements DynamicPlatformPlugin {
 function looksElectric(vehicle: VehicleSummary): boolean {
   const record = vehicle.record as Record<string, unknown> | null;
   return record?.['evVehicle'] === true;
+}
+
+/** Debug lines go out at info level, marked, so they show without Homebridge's -D flag. */
+export function verboseLogger(log: Logging): Logging {
+  return new Proxy(log, {
+    get(target, property, receiver) {
+      if (property === 'debug') {
+        return (message: string, ...parameters: unknown[]) => target.info(`[debug] ${message}`, ...parameters);
+      }
+      const value: unknown = Reflect.get(target, property, receiver);
+      return typeof value === 'function' ? (value as (...a: unknown[]) => unknown).bind(target) : value;
+    },
+  });
+}
+
+/** One startup line with the settings in effect. No email, password, keys or VIN. */
+export function describeSettings(config: ToyotaConfig): string {
+  const parts = [
+    `polling every ${config.pollIntervalMinutes} min`,
+    config.staleReportHours > 0 ? `fresh report after ${config.staleReportHours} h` : 'no stale-report requests',
+    config.wakeOnHomeAppOpen ? 'fresh report on Home app open' : 'no Home app requests',
+    config.autoLockMinutes === undefined ? 'auto-lock off' : `auto-lock after ${config.autoLockMinutes} min`,
+    config.remoteStartEnabled ? `Remote Start on${config.remoteStartPrepare ? ' with preparation' : ''}` : 'Remote Start off',
+    `sensors ${config.exposeOpenings ? 'on' : 'off'}`,
+    `battery ${config.exposeBattery ? 'on' : 'off'}`,
+  ];
+  if (config.generation) {
+    parts.push(`generation forced to ${config.generation}`);
+  }
+  if (config.vin) {
+    parts.push(`one vehicle (…${config.vin.slice(-4)})`);
+  }
+  if (config.debug) {
+    parts.push('debug logging on');
+  }
+  return `Toyota plugin ${PLUGIN_VERSION}: ${parts.join(', ')}.`;
 }

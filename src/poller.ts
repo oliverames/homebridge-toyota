@@ -46,6 +46,7 @@ export class Poller {
     private readonly baseMs: number,
     private readonly random: () => number = Math.random,
     private readonly now: () => number = Date.now,
+    private readonly debug: (message: string) => void = () => {},
   ) {}
 
   /**
@@ -62,6 +63,7 @@ export class Poller {
       if (this.timer) {
         clearTimeout(this.timer);
       }
+      this.debug(`Something just happened; updating every minute for the next ${Math.round((this.fastUntil - this.now()) / 60_000)} minutes.`);
       this.schedule(FAST_POLL_MS);
     }
   }
@@ -113,13 +115,15 @@ export class Poller {
       this.schedule(FAST_POLL_MS);
       return;
     }
-    this.schedule(
-      nextDelayMs({
-        baseMs: this.baseMs,
-        consecutiveFailures: this.failures,
-        rateLimited: outcome === 'rateLimited',
-        jitter: this.random(),
-      }),
-    );
+    const delay = nextDelayMs({
+      baseMs: this.baseMs,
+      consecutiveFailures: this.failures,
+      rateLimited: outcome === 'rateLimited',
+      jitter: this.random(),
+    });
+    if (this.failures > 0) {
+      this.debug(`Update ${outcome} (${this.failures} in a row); next try in ${Math.round(delay / 60_000)} minutes.`);
+    }
+    this.schedule(delay);
   }
 }

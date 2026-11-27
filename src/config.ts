@@ -35,6 +35,8 @@ export interface ToyotaConfig {
   /** AppSync key, only needed for 24MM remote commands. */
   graphqlApiKey?: string;
   appVersion: string;
+  /** Show this plugin's debug lines in the normal log, without running all of Homebridge in debug mode. */
+  debug: boolean;
 }
 
 export interface ConfigResult {
@@ -144,6 +146,7 @@ export function parseConfig(raw: Record<string, unknown>): ConfigResult {
       remoteStartPrepare,
       graphqlApiKey: optString(raw['graphqlApiKey']),
       appVersion: optString(raw['appVersion']) ?? DEFAULT_APP_VERSION,
+      debug: raw['debug'] === true,
     },
   };
 }

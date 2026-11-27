@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.2 - 2026-11-27
+
+- Logging covers every part of the plugin. Always logged: a startup summary of the settings in effect, every HomeKit request, each opening opened or closed, charging started or stopped, the engine or climate turning on or off, command confirmation times, and full sign-ins. Debug lines add every Toyota request with its status and duration, network failures by kind, each token refresh with the remaining sign-in lifetime, a summary after every update, auto-lock's reasoning, and backoff and fast-polling decisions.
+- New `debug` setting shows those debug lines in the normal log, marked `[debug]`, without restarting Homebridge in debug mode.
+- A test checks that no log line or error message carries a password, client key, token, guid, device id or full VIN.
+
 ## 0.4.1 - 2026-11-27
 
 - A "jwt expired" answer from Toyota always refreshes the token, even inside the 5-minute forced-refresh cooldown, which exists for outage 403s. On 2026-11-25 such an answer failed the poll instead.

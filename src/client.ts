@@ -5,6 +5,7 @@ import { isObject, str } from './json';
 import type { Generation } from './parse';
 import { redact } from './redact';
 import { FileStore, requiresRefresh, type Session } from './session';
+import { expiryMs } from './jwt';
 import { API_GATEWAY, GRAPHQL_ENDPOINT, SERVICES_GATEWAY } from './settings';
 
 export class ApiHttpError extends Error {
@@ -243,6 +244,24 @@ export interface ClientLogger {
   warn(message: string, ...args: unknown[]): void;
 }
 
+/** "access token valid 30 min, sign-in valid 90 days" — times only, never the tokens. */
+export function describeSession(session: Session, now: number): string {
+  const access = Math.round((session.expiresAt - now) / 60_000);
+  const signIn = expiryMs(session.refreshToken);
+  const days = signIn === undefined ? undefined : Math.round((signIn - now) / 86_400_000);
+  return `access token valid ${access} min${days === undefined ? '' : `, sign-in valid ${days} days`}`;
+}
+
+/** The kind of network failure, without URLs or bodies. */
+export function networkReason(error: unknown): string {
+  if (error instanceof Error) {
+    const cause = (error as { cause?: { code?: unknown } }).cause;
+    const code = typeof cause?.code === 'string' ? ` (${cause.code})` : '';
+    return error.name === 'TimeoutError' || error.name === 'AbortError' ? `timed out${code}` : `${error.name}${code}`;
+  }
+  return 'unknown error';
+}
+
 /** Minimum gap between refreshes forced by a 401/403. */
 export const FORCED_REFRESH_COOLDOWN_MS = 5 * 60 * 1000;
 /** Consecutive refreshed-and-still-refused requests before the client key is blamed. */
@@ -302,6 +321,9 @@ export class ToyotaClient {
       const stored = this.store.load();
       this.seenMtime = mtime;
       if (stored && stored.username.toLowerCase() === this.config.username.toLowerCase()) {
+        if (this.session) {
+          this.log.info('Using the Toyota sign-in saved from the settings page.');
+        }
         session = stored;
         this.session = stored;
       }
@@ -312,9 +334,14 @@ export class ToyotaClient {
     }
     if (session) {
       try {
+        const started = this.now();
         const refreshed = await this.auth.refresh(session);
+        this.log.debug(`Toyota token refreshed${forceRefresh ? ' (forced by a refused request)' : ''} in ${this.now() - started} ms; ${describeSession(refreshed, this.now())}.`);
         return this.accept(refreshed);
       } catch (error) {
+        if (!(error instanceof AuthHttpError) || !error.isRefreshTokenRejection) {
+          this.log.debug(`Toyota token refresh failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
         if (!(error instanceof AuthHttpError) || !error.isRefreshTokenRejection) {
           throw error;
         }
@@ -323,11 +350,13 @@ export class ToyotaClient {
         this.session = undefined;
       }
     }
+    this.log.info('Signing in to Toyota with the saved email and password.');
     const signedIn = await this.auth.signIn({
       username: this.config.username,
       password: this.config.password,
       otp: this.config.oneTimePasscode,
     });
+    this.log.info(`Signed in to Toyota; ${describeSession(signedIn, this.now())}.`);
     return this.accept(signedIn);
   }
 
@@ -396,12 +425,20 @@ export class ToyotaClient {
       // Header names and the redacted body only, so a refused command can be compared with RedLink's request.
       this.log.debug(`${route.method} ${route.path} headers [${Object.keys(headers).sort().join(', ')}] body ${redact(body ?? '')}`);
     }
-    const response = await this.fetchFn(routeUrl(route), {
-      method: route.method,
-      headers,
-      body,
-      signal: AbortSignal.timeout(route.method === 'GET' ? 20_000 : 60_000),
-    });
+    const started = this.now();
+    let response: Response;
+    try {
+      response = await this.fetchFn(routeUrl(route), {
+        method: route.method,
+        headers,
+        body,
+        signal: AbortSignal.timeout(route.method === 'GET' ? 20_000 : 60_000),
+      });
+    } catch (error) {
+      this.log.debug(`${route.method} ${route.path} failed after ${this.now() - started} ms: ${networkReason(error)}`);
+      throw error;
+    }
+    this.log.debug(`${route.method} ${route.path} answered HTTP ${response.status} in ${this.now() - started} ms`);
     return this.readEnvelope(response, route);
   }
 
@@ -428,6 +465,7 @@ export class ToyotaClient {
       throw new UnsupportedError('24MM remote commands need "graphqlApiKey" in the plugin config.');
     }
     const run = async (session: Session): Promise<Envelope> => {
+      const started = this.now();
       const response = await this.fetchFn(GRAPHQL_ENDPOINT, {
         method: 'POST',
         headers: {
@@ -449,7 +487,11 @@ export class ToyotaClient {
           variables: { command, autoFixCommands: [] },
         }),
         signal: AbortSignal.timeout(60_000),
+      }).catch((error: unknown) => {
+        this.log.debug(`GraphQL ${command} failed after ${this.now() - started} ms: ${networkReason(error)}`);
+        throw error;
       });
+      this.log.debug(`GraphQL ${command} answered HTTP ${response.status} in ${this.now() - started} ms`);
       const text = await response.text();
       if (!response.ok) {
         throw new ApiHttpError(response.status, text);

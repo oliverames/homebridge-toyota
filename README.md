@@ -108,6 +108,7 @@ Set `remoteStart.prepare` to `false` to start immediately instead. Toyota allows
 | `vin` | No | all vehicles | Expose only this VIN. |
 | `generation` | No | reported by Toyota, else `21MM` | `17CY`, `17CYPLUS`, `21MM` or `24MM`. |
 | `pollIntervalMinutes` | No | `5` | Minimum 5. Backs off automatically on errors. |
+| `debug` | No | `false` | Show the plugin's detailed log lines (every request with status and timing, token refreshes, a summary after each update) in the normal log, marked `[debug]`. |
 | `autoLock.enabled` | No | `false` | Lock the doors when they have been reported unlocked for `autoLock.afterMinutes` (default 10) with the car parked, closed and idle. See the design notes for its limits. |
 | `wakeOnHomeAppOpen` | No | `true` | When the Home app shows the car and its report is 15+ minutes old, ask the car for a fresh one. At most eight a day. |
 | `staleReportHours` | No | `3` | Once Toyota's report from the car is this many hours old, ask the car for a fresh one, at most once per this interval. Each request wakes the car. Minimum 3; `0` turns it off. |
