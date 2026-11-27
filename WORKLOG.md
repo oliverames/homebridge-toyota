@@ -1,5 +1,17 @@
 # Worklog
 
+## 2026-11-27 - 0.3.5: lock state visibility
+
+**What changed**: Reviewed the home-server log from 11/14 to 11/27 after reports of an inconsistent lock state. Since 0.3.3, every Remote Start and its preparatory lock confirmed (11/19, 11/25, 11/26); the only unconfirmed lock command was the 11/16 unlock under the old 30 s window. The info log never recorded what each poll reported, so the lock tile could not be traced. 0.3.5 logs each change in the reported lock state with Toyota's `occurrenceDate`, and the per-door lock values when the state is unknown.
+
+**Verified**: 143 tests, lint, typecheck and build pass locally. Released as v0.3.5 on GitHub.
+
+**Decisions made**: Unknown is still shown when a door lacks a lock value, and the tile still starts Unknown after a restart. Both are pinned by tests as deliberate, and the log gives no evidence of lock-less reports yet.
+
+**Left off at**: v0.3.5 is NOT deployed; home-server still runs 0.3.4. After deploying, compare the "Doors reported" lines against what the car actually showed. A stale `occurrenceDate` points at Toyota's cache (an opt-in status refresh would be the fix); a missing lock value points at parsing.
+
+---
+
 ## 2026-11-17 - 0.3.3: outage hardening
 
 **What changed**: Diagnosed failures from the home-server log (Toyota 500/503/403 bursts, sign-in 429s, a false "client key rotated" warning twice, and a Remote Start abandoned because the lock was not reported within 30 s). 0.3.3 throttles forced refreshes to one per 5 minutes, needs three refreshed-and-refused requests before blaming the key, confirms over six reads, tolerates a transient read failure, and absorbs repeated taps.
