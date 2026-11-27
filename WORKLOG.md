@@ -1,5 +1,15 @@
 # Worklog
 
+## 2026-11-27 - 0.3.8 and 0.3.9: auto-lock
+
+**What changed**: Oliver asked for better power, lock and temperature state and for auto-lock. Temperature is not possible: RedLink's inventory (`docs/trends-data-inventory-2026-09-06.md`) found no endpoint returning cabin, outside or battery temperature, only the climate target. No HomeKit type exists for ignition or plug state. 0.3.8 adds opt-in auto-lock ported from RedLink's `ToyotaAutoLock` (fresh zero-speed telemetry, all closed, engine and climate off, 15 min grace after a HomeKit unlock, 10 min cooldown, 3 attempts per episode) plus a 10 minute unlocked dwell and a cap of 3 fresh-report requests per episode. A background security review found two real defects in 0.3.8 (an unknown engine state counted as not running; a HomeKit unlock during the telemetry read did not stop the attempt), fixed in 0.3.9.
+
+**Verified**: 178 tests, lint, typecheck and build pass locally. Released as v0.3.8 and v0.3.9.
+
+**Left off at**: Oliver approved deploying 0.3.9 with `autoLock: {enabled: true, afterMinutes: 10}`, but SSH failed at the first step when the 1Password agent stopped signing. home-server is unchanged: 0.3.7, auto-lock off, config untouched. When SSH works: back up config.json, install the 0.3.9 tarball, add `autoLock` to the Toyota platform, restart only the Toyota bridge, and watch for the first "Auto-lock" line. The car last reported its doors and hatch unlocked (21:59:29Z).
+
+---
+
 ## 2026-11-27 - 0.3.7: Home app wakes, fast follow-up, hatch lock, stale display
 
 **What changed**: Oliver asked for more frequent updates and better state, and chose all four options. 0.3.7 wakes the car when the Home app reads the Doors lock and the report is 15+ minutes old (capped at eight a day), polls every minute for 10 minutes after any command, wake or running engine, adds a Hatch lock once the car reports a hatch lock value (`trunk-lock`/`trunk-unlock`), shows locks as Unknown when the report is over 12 hours old, and logs every opening once per start.
