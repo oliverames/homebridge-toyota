@@ -6,6 +6,7 @@ import {
   parseElectricStatus,
   parseEngineRunning,
   parseRemoteStatus,
+  reportTime,
   hasRemoteCapability,
   parseVehicleList,
   prepareCapabilities,
@@ -70,7 +71,16 @@ describe('remote status', () => {
   it('keeps the time the vehicle uploaded the report, when Toyota gives one', () => {
     const doors = [{ category: 'Driver Side Door', sections: [{ section: 'Driver Side Door', values: [{ value: 'locked' }] }] }];
     expect(status({ payload: { occurrenceDate: '2026-11-26T22:55:20Z', vehicleStatus: doors } }).reportedAt).toBe('2026-11-26T22:55:20Z');
+    expect(status({ payload: { occurrenceDate: '2026-11-26T22:55:20Z', vehicleStatus: doors } }).reportedAtMs).toBe(Date.parse('2026-11-26T22:55:20Z'));
     expect(status({ vehicleStatus: doors }).reportedAt).toBeUndefined();
+  });
+  it('reads epoch report times and rejects implausible ones', () => {
+    const now = Date.parse('2026-11-27T20:00:00Z');
+    expect(reportTime({ lastTimestamp: 1_764_270_000 }, now).reportedAtMs).toBe(1_764_270_000_000);
+    expect(reportTime({ occurrenceDate: 1_764_270_000_000 }, now).reportedAtMs).toBe(1_764_270_000_000);
+    expect(reportTime({ occurrenceDate: 12 }, now).reportedAtMs).toBeUndefined();
+    expect(reportTime({ occurrenceDate: '2027-06-01T00:00:00Z' }, now).reportedAtMs).toBeUndefined();
+    expect(reportTime({ timestamp: '2026-11-27T19:59:00Z' }, now)).toEqual({});
   });
   it('an open opening dominates an earlier lock token', () => {
     const s = status({ vehicleStatus: [{ category: 'Rear Hatch', sections: [{ section: 'Rear Hatch', values: [{ value: 'unlocked' }, { value: 'open' }] }] }] });

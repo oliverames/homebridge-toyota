@@ -180,6 +180,23 @@ export const routes = {
     }
     return { method: 'POST', path: 'v1/global/remote/command', body: { command, autoFixPopup: false } };
   },
+  /**
+   * Asks the vehicle to upload a fresh status report (RedLink's `refreshStatus`).
+   * This wakes the car, so the controller rations it. 24MM uses a GraphQL mutation instead and is not supported here.
+   */
+  refreshStatus: (g: Generation, session: Session, vin: string): Route => {
+    if (g === '24MM') {
+      throw new UnsupportedError('Requesting a fresh report is not available on 24MM vehicles yet.');
+    }
+    if (g === '17CY') {
+      return {
+        method: 'POST',
+        path: 'v1/legacy/remote/refresh-status',
+        body: { guid: session.guid, deviceId: session.deviceId, deviceType: 'iOS', vin },
+      };
+    }
+    return { method: 'POST', path: 'v1/global/remote/refresh-status', body: { guid: session.guid, deviceId: session.deviceId, vin } };
+  },
   startClimate: (session: Session): Route => ({
     method: 'POST',
     path: 'v2/electric/command',

@@ -37,6 +37,12 @@ class FakeApi implements VehicleApi {
     if (this.sendError) throw this.sendError;
     this.sent.push(command);
   }
+  refreshes = 0;
+  refreshError?: Error;
+  async requestRefresh(): Promise<void> {
+    this.refreshes++;
+    if (this.refreshError) throw this.refreshError;
+  }
 }
 
 function setup(api: FakeApi, opts: { remoteStart?: boolean; exposeBattery?: boolean; now?: () => number } = {}) {
@@ -218,5 +224,87 @@ describe('remote start command', () => {
     expect(api.sent).toEqual(['remoteStart']);
     expect(controller.state.running).toBe(true);
     expect(events).toEqual([]);
+  });
+});
+
+describe('fresh report requests', () => {
+  const HOUR = 3_600_000;
+  const NOW = Date.parse('2026-11-27T20:09:00Z');
+  const report = (locked: boolean, ageMs: number): RemoteStatus => ({ openings: [], doorsLocked: locked, reportedAt: 'x', reportedAtMs: NOW - ageMs });
+
+  function wakeSetup(api: FakeApi, saved?: number, staleReportMs = 3 * HOUR) {
+    const lines: string[] = [];
+    const store = { value: saved, load() { return this.value; }, save(v: number) { this.value = v; } };
+    const states: VehicleState[] = [];
+    const controller = new VehicleController(
+      'VIN', '21MM', api,
+      { remoteStart: false, exposeBattery: false, staleReportMs, wakeStore: store, wakeWaitDelaysMs: [0, 0, 0], now: () => NOW, sleep: async () => {} },
+      { stateChanged: (s) => states.push(structuredClone(s)), commandFailed() {} },
+      { info: (m) => lines.push(m), warn: (m) => lines.push(`warn:${m}`), debug() {} },
+    );
+    return { controller, store, lines, states };
+  }
+
+  it('leaves a recent report alone', async () => {
+    const api = new FakeApi();
+    api.statuses = [report(true, HOUR)];
+    const { controller } = wakeSetup(api);
+    expect(await controller.poll()).toBe('ok');
+    expect(api.refreshes).toBe(0);
+  });
+
+  it('asks for a fresh report when the last one is stale, and shows it when it arrives', async () => {
+    const api = new FakeApi();
+    // Toyota's cached report says unlocked, 3.2 hours old; the car's fresh report says locked.
+    api.statuses = [report(false, 3.2 * HOUR), report(false, 3.2 * HOUR), report(true, 0)];
+    const { controller, store, lines, states } = wakeSetup(api);
+    expect(await controller.poll()).toBe('ok');
+    expect(api.refreshes).toBe(1);
+    expect(store.value).toBe(NOW);
+    expect(states.at(-1)?.status?.doorsLocked).toBe(true);
+    expect(lines[0]).toBe("The vehicle's last report is 3.2 hours old; asking it for a fresh one.");
+    expect(lines.at(-1)).toContain('sent a fresh report');
+  });
+
+  it('wakes at most once per interval, across restarts', async () => {
+    const api = new FakeApi();
+    api.statuses = [report(false, 5 * HOUR)];
+    const { controller } = wakeSetup(api, NOW - 2 * HOUR);
+    await controller.poll();
+    expect(api.refreshes).toBe(0);
+    const later = wakeSetup(api, NOW - 3 * HOUR);
+    await later.controller.poll();
+    await later.controller.poll();
+    expect(api.refreshes).toBe(1);
+  });
+
+  it('a refused request is not retried until the interval passes, and a 429 backs the poller off', async () => {
+    const api = new FakeApi();
+    api.statuses = [report(true, 4 * HOUR)];
+    api.refreshError = new ApiHttpError(429, '');
+    const { controller, lines } = wakeSetup(api);
+    expect(await controller.poll()).toBe('rateLimited');
+    expect(await controller.poll()).toBe('ok');
+    expect(api.refreshes).toBe(1);
+    expect(lines.some((l) => l.startsWith('warn:Toyota refused the request for a fresh report'))).toBe(true);
+  });
+
+  it('says so when no fresh report arrives in the wait', async () => {
+    const api = new FakeApi();
+    api.statuses = [report(true, 4 * HOUR)];
+    const { controller, lines } = wakeSetup(api);
+    await controller.poll();
+    expect(lines.at(-1)).toContain('has not sent a fresh report yet');
+  });
+
+  it('a report without a time counts as stale; turned off, it never wakes', async () => {
+    const api = new FakeApi();
+    api.statuses = [{ openings: [], doorsLocked: true }];
+    await wakeSetup(api).controller.poll();
+    expect(api.refreshes).toBe(1);
+    const off = new FakeApi();
+    off.statuses = [report(true, 10 * HOUR)];
+    await wakeSetup(off, undefined, 0).controller.poll();
+    expect(off.refreshes).toBe(0);
   });
 });

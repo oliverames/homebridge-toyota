@@ -1,4 +1,4 @@
-import { ApiHttpError, ClientKeyRejectedError } from './client';
+import { ApiHttpError, ClientKeyRejectedError, UnsupportedError } from './client';
 import { classifyError, type VehicleApi, type VehicleCommand } from './api';
 import type { ElectricStatus, Generation, PrepareCapabilities, RemoteStatus } from './parse';
 import type { PollOutcome } from './poller';
@@ -32,8 +32,22 @@ export interface ControllerOptions {
   verifyDelaysMs?: number[];
   /** True when Toyota's vehicle record says the vehicle is an EV or plug-in hybrid. */
   electricHint?: boolean;
+  /**
+   * Ask the vehicle for a fresh report once its last one is this old, at most
+   * once per this interval (RedLink's stale-report wake). 0 or unset: never.
+   */
+  staleReportMs?: number;
+  /** Remembers the last wake across restarts, so a restart does not wake the car again. */
+  wakeStore?: WakeStore;
+  /** Pauses between status reads while waiting for the fresh report. */
+  wakeWaitDelaysMs?: number[];
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
+}
+
+export interface WakeStore {
+  load(): number | undefined;
+  save(wokeAt: number): void;
 }
 
 /**
@@ -42,6 +56,8 @@ export interface ControllerOptions {
  * Remote Start. The reads are cheap cached GETs.
  */
 export const DEFAULT_VERIFY_DELAYS_MS = [10_000, 10_000, 10_000, 10_000, 10_000, 10_000];
+/** A parked car takes a while to wake and upload; about two minutes, then the next poll picks it up. */
+export const DEFAULT_WAKE_WAIT_DELAYS_MS = [20_000, 20_000, 20_000, 30_000, 30_000];
 const PARK_MS = 12 * 60 * 60 * 1000;
 const STATUS_RETRY_MS = 5_000;
 const FORBIDDEN_BEFORE_PARK = 3;
@@ -57,6 +73,8 @@ export class VehicleController {
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly delays: number[];
+  private lastWake?: number;
+  private refreshUnsupported = false;
 
   constructor(
     readonly vin: string,
@@ -127,10 +145,80 @@ export class VehicleController {
     }
 
     this.emit();
+    if (worst === 'ok') {
+      worst = await this.refreshIfStale();
+    }
     return worst;
   }
 
   lastError?: string;
+
+  /**
+   * Toyota serves the vehicle's last upload, which can be hours old on a parked
+   * car. When it is older than `staleReportMs` and no wake went out within that
+   * time, ask the vehicle for a fresh report and wait briefly for it. A wake
+   * that RedLink or the Toyota app sent shows up as a fresh report, so this
+   * plugin does not add its own on top. Never throws.
+   */
+  private async refreshIfStale(): Promise<PollOutcome> {
+    const staleMs = this.options.staleReportMs ?? 0;
+    const status = this.state.status;
+    if (staleMs <= 0 || this.refreshUnsupported || this.pending || !status) {
+      return 'ok';
+    }
+    const now = this.now();
+    const reportedAtMs = status.reportedAtMs;
+    if (reportedAtMs !== undefined && now - reportedAtMs < staleMs) {
+      return 'ok';
+    }
+    this.lastWake ??= this.options.wakeStore?.load();
+    if (this.lastWake !== undefined && now - this.lastWake >= 0 && now - this.lastWake < staleMs) {
+      return 'ok';
+    }
+    // Recorded before sending, so a failure or a crash still waits a full interval.
+    this.lastWake = now;
+    try {
+      this.options.wakeStore?.save(now);
+    } catch (error) {
+      this.log.debug(`Could not save the wake time: ${describe(error)}`);
+    }
+    const age = reportedAtMs === undefined ? 'has no report time' : `is ${formatAge(now - reportedAtMs)} old`;
+    const retry = formatAge(staleMs);
+    this.log.info(`The vehicle's last report ${age}; asking it for a fresh one.`);
+    try {
+      await this.api.requestRefresh(this.vin, this.generation);
+    } catch (error) {
+      if (error instanceof UnsupportedError) {
+        this.refreshUnsupported = true;
+        this.log.info(`${describe(error)} Lock state will be as fresh as the vehicle's own reports.`);
+        return 'ok';
+      }
+      this.log.warn(`Toyota refused the request for a fresh report: ${describe(error)} Trying again in ${retry}.`);
+      const outcome = classifyError(error);
+      return outcome === 'rateLimited' ? outcome : 'ok';
+    }
+    for (const delay of this.options.wakeWaitDelaysMs ?? DEFAULT_WAKE_WAIT_DELAYS_MS) {
+      await this.sleep(delay);
+      let fresh: RemoteStatus;
+      try {
+        fresh = await this.api.readStatus(this.vin, this.generation);
+      } catch (error) {
+        if (classifyError(error) !== 'failed') {
+          break;
+        }
+        this.log.debug(`Read while waiting for a fresh report failed; trying again: ${describe(error)}`);
+        continue;
+      }
+      if (fresh.reportedAtMs !== undefined && (reportedAtMs === undefined || fresh.reportedAtMs > reportedAtMs)) {
+        this.state.status = fresh;
+        this.emit();
+        this.log.info(`The vehicle sent a fresh report (${fresh.reportedAt ?? 'no report time'}).`);
+        return 'ok';
+      }
+    }
+    this.log.info(`The vehicle has not sent a fresh report yet; a later poll will show it if it arrives. Next request in ${retry} at the earliest.`);
+    return 'ok';
+  }
 
   /**
    * Sends a command, then re-reads cached status a bounded number of times to confirm.
@@ -358,6 +446,15 @@ function endpointRefusal(error: unknown): 'permanent' | 'forbidden' | undefined 
     return 'forbidden';
   }
   return undefined;
+}
+
+/** "40 minutes", "3.2 hours". */
+export function formatAge(ms: number): string {
+  const minutes = Math.round(ms / 60_000);
+  if (minutes < 90) {
+    return `${minutes} minute${minutes === 1 ? '' : 's'}`;
+  }
+  return `${(ms / 3_600_000).toFixed(1)} hours`;
 }
 
 export function describe(error: unknown): string {

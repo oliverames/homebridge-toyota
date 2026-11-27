@@ -4,6 +4,10 @@ import { DEFAULT_APP_VERSION } from './settings';
 export const MIN_POLL_MINUTES = 5;
 export const DEFAULT_POLL_MINUTES = 5;
 export const MAX_POLL_MINUTES = 24 * 60;
+/** RedLink's stale-report interval; also the shortest allowed, to protect the 12 V battery. */
+export const DEFAULT_STALE_REPORT_HOURS = 3;
+export const MIN_STALE_REPORT_HOURS = 3;
+export const MAX_STALE_REPORT_HOURS = 48;
 
 export interface ToyotaConfig {
   username: string;
@@ -16,6 +20,8 @@ export interface ToyotaConfig {
   /** Override Toyota's reported generation (17CY, 17CYPLUS, 21MM, 24MM). */
   generation?: Generation;
   pollIntervalMinutes: number;
+  /** Ask the vehicle for a fresh report once its last one is this many hours old. 0 = never. */
+  staleReportHours: number;
   exposeOpenings: boolean;
   exposeBattery: boolean;
   remoteStartEnabled: boolean;
@@ -75,6 +81,21 @@ export function parseConfig(raw: Record<string, unknown>): ConfigResult {
     }
   }
 
+  let staleReportHours = DEFAULT_STALE_REPORT_HOURS;
+  if (raw['staleReportHours'] !== undefined) {
+    const n = Number(raw['staleReportHours']);
+    if (!Number.isFinite(n) || n < 0) {
+      warnings.push(`"staleReportHours" must be 0 or a number of hours; using ${DEFAULT_STALE_REPORT_HOURS}.`);
+    } else if (n === 0) {
+      staleReportHours = 0;
+    } else if (n < MIN_STALE_REPORT_HOURS) {
+      warnings.push(`"staleReportHours" below ${MIN_STALE_REPORT_HOURS} is not allowed (each request wakes the car); using ${MIN_STALE_REPORT_HOURS}.`);
+      staleReportHours = MIN_STALE_REPORT_HOURS;
+    } else {
+      staleReportHours = Math.min(n, MAX_STALE_REPORT_HOURS);
+    }
+  }
+
   const remoteStart = raw['remoteStart'];
   const remoteStartEnabled =
     typeof remoteStart === 'object' && remoteStart !== null && (remoteStart as Record<string, unknown>)['enabled'] === true;
@@ -96,6 +117,7 @@ export function parseConfig(raw: Record<string, unknown>): ConfigResult {
       vin: optString(raw['vin'])?.toUpperCase(),
       generation,
       pollIntervalMinutes,
+      staleReportHours,
       exposeOpenings: raw['exposeOpenings'] !== false,
       exposeBattery: raw['exposeBattery'] !== false,
       remoteStartEnabled,

@@ -5,7 +5,7 @@ import { classifyError, ToyotaVehicleApi } from './api';
 import { type ChallengeStore, type PendingChallenge, ToyotaAuth } from './auth';
 import { ToyotaClient } from './client';
 import { parseConfig, type ToyotaConfig } from './config';
-import { describe, VehicleController } from './controller';
+import { describe, VehicleController, type WakeStore } from './controller';
 import { type Generation, prepareCapabilities, type VehicleSummary } from './parse';
 import { Poller, type PollOutcome } from './poller';
 import { FileStore, isSession, type Session } from './session';
@@ -129,6 +129,15 @@ export class ToyotaPlatform implements DynamicPlatformPlugin {
     this.sessionWatch.unref();
   }
 
+  /** Last wake time per vehicle, kept beside the session so a restart does not wake the car again. */
+  private wakeStore(vin: string): WakeStore {
+    const file = new FileStore<{ wokeAt: number }>(
+      join(this.api.user.storagePath(), 'homebridge-toyota', `wake-${vin}.json`),
+      (v): v is { wokeAt: number } => typeof v === 'object' && v !== null && typeof (v as { wokeAt?: unknown }).wokeAt === 'number',
+    );
+    return { load: () => file.load()?.wokeAt, save: (wokeAt) => file.save({ wokeAt }) };
+  }
+
   private stopSessionWatch(): void {
     if (this.sessionWatch) {
       clearInterval(this.sessionWatch);
@@ -209,6 +218,8 @@ export class ToyotaPlatform implements DynamicPlatformPlugin {
         exposeBattery: config.exposeBattery,
         electricHint: looksElectric(vehicle),
         prepare: config.remoteStartEnabled && config.remoteStartPrepare ? prepareCapabilities(vehicle, generation ?? DEFAULT_GENERATION) : undefined,
+        staleReportMs: config.staleReportHours * 60 * 60 * 1000,
+        wakeStore: this.wakeStore(vehicle.vin),
       },
       view,
       this.log,

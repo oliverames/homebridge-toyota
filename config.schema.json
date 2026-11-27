@@ -57,6 +57,14 @@
         "minimum": 5,
         "maximum": 1440
       },
+      "staleReportHours": {
+        "title": "Ask the car for a fresh report after (hours)",
+        "description": "Toyota serves the car's last upload, which can be hours old on a parked car. Once it is this old, the plugin asks the car for a fresh report, at most once per this many hours. Each request wakes the car. Default 3 (about eight a day at most), minimum 3, 0 turns it off.",
+        "type": "number",
+        "default": 3,
+        "minimum": 0,
+        "maximum": 48
+      },
       "exposeOpenings": {
         "title": "Door, window, trunk and hood contact sensors",
         "description": "One native contact sensor per opening the vehicle reports.",
@@ -116,7 +124,7 @@
       "title": "Advanced",
       "expandable": true,
       "expanded": false,
-      "items": ["vin", "generation", "pollIntervalMinutes", "graphqlApiKey", "appVersion"]
+      "items": ["vin", "generation", "pollIntervalMinutes", "staleReportHours", "graphqlApiKey", "appVersion"]
     }
   ]
 }

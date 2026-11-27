@@ -19,6 +19,14 @@ describe('parseConfig', () => {
     expect(r.warnings).toHaveLength(1);
     expect(parseConfig({ ...base, pollIntervalMinutes: 15 }).config?.pollIntervalMinutes).toBe(15);
   });
+  it('asks for a fresh report after 3 hours by default, never more often, and 0 turns it off', () => {
+    expect(parseConfig(base).config?.staleReportHours).toBe(3);
+    const r = parseConfig({ ...base, staleReportHours: 1 });
+    expect(r.config?.staleReportHours).toBe(3);
+    expect(r.warnings.join(' ')).toContain('staleReportHours');
+    expect(parseConfig({ ...base, staleReportHours: 0 }).config?.staleReportHours).toBe(0);
+    expect(parseConfig({ ...base, staleReportHours: 6 }).config?.staleReportHours).toBe(6);
+  });
   it('remote start is opt-in', () => {
     expect(parseConfig({ ...base, remoteStart: { enabled: true } }).config?.remoteStartEnabled).toBe(true);
     expect(parseConfig({ ...base, remoteStart: {} }).config?.remoteStartEnabled).toBe(false);

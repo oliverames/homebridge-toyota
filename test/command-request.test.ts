@@ -160,3 +160,23 @@ describe("refusal reason from Toyota's body", () => {
     expect(out).toContain('…0001');
   });
 });
+
+describe('refresh-status request (pinned against RedLink ToyotaRequestFactory .refreshStatus)', () => {
+  it('posts guid, deviceId and vin to v1/global/remote/refresh-status on 21MM', async () => {
+    const { api, net } = build(() => new Response('{"status":"SUCCESS","payload":{}}', { status: 200 }));
+    await api.requestRefresh(VIN, '21MM');
+    expect(net.calls).toHaveLength(1);
+    const { url, init } = net.calls[0]!;
+    expect(url).toMatch(/\/v1\/global\/remote\/refresh-status$/);
+    expect(init?.method).toBe('POST');
+    expect(JSON.parse(String(init?.body))).toEqual({ guid: 'guid-1', deviceId: 'device-abc', vin: VIN });
+  });
+  it('uses the legacy route with deviceType on 17CY and refuses 24MM without a request', async () => {
+    const { api, net } = build(() => new Response('{"status":"SUCCESS","payload":{}}', { status: 200 }));
+    await api.requestRefresh(VIN, '17CY');
+    expect(net.calls[0]!.url).toMatch(/\/v1\/legacy\/remote\/refresh-status$/);
+    expect(JSON.parse(String(net.calls[0]!.init?.body))).toEqual({ guid: 'guid-1', deviceId: 'device-abc', deviceType: 'iOS', vin: VIN });
+    await expect(api.requestRefresh(VIN, '24MM')).rejects.toThrow('not available on 24MM');
+    expect(net.calls).toHaveLength(1);
+  });
+});

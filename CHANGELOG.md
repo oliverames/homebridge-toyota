@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.6 - 2026-11-27
+
+- Stale reports are refreshed. Toyota serves the car's last upload, and on 2026-11-27 the plugin started on a report 3 hours 14 minutes old. Once the report is `staleReportHours` old (default and minimum 3, `0` turns it off) and no request went out within that time, the plugin asks the car for a fresh report (`refresh-status`, as RedLink does since 2026-11-15) and watches for it for about two minutes. Each request wakes the car, so the last request time is saved per vehicle and survives restarts; a parked car gets at most about eight a day. A wake sent by RedLink or the Toyota app shows up as a fresh report, so none is added on top. Not available on 24MM vehicles.
+- The report time is now read as a timestamp too (`occurrenceDate`, then `lastTimestamp`, ISO or epoch), never from the envelope's server `timestamp`.
+
 ## 0.3.5 - 2026-11-27
 
 - Each change in the reported door lock state is logged at info level with the time the vehicle uploaded that report (Toyota's `occurrenceDate`). When the lock state is unknown, the line names each door and whether it carried a lock value. Toyota serves the car's last upload, which can be hours old, so this shows whether a HomeKit lock tile that looks wrong came from a stale report or from parsing.

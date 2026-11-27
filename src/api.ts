@@ -32,6 +32,8 @@ export interface VehicleApi {
   /** Engine (or climate, for EVs) running state, when Toyota reports it. */
   readRunning(vin: string, generation: Generation, electric: boolean): Promise<boolean | undefined>;
   sendCommand(command: VehicleCommand, vin: string, generation: Generation, electric: boolean): Promise<void>;
+  /** Asks the vehicle to upload a fresh status report. Wakes the car; callers ration it. */
+  requestRefresh(vin: string, generation: Generation): Promise<void>;
 }
 
 export class ToyotaVehicleApi implements VehicleApi {
@@ -87,6 +89,10 @@ export class ToyotaVehicleApi implements VehicleApi {
       }
     }
     return parseEngineRunning((await this.client.send(() => routes.engineStatus(generation), vin, generation)).data);
+  }
+
+  async requestRefresh(vin: string, generation: Generation): Promise<void> {
+    await this.client.send((s) => routes.refreshStatus(generation, s, vin), vin, generation);
   }
 
   async sendCommand(command: VehicleCommand, vin: string, generation: Generation, electric: boolean): Promise<void> {

@@ -33,6 +33,7 @@ function build(opts: { remoteStart?: boolean; exposeOpenings?: boolean; exposeBa
     readElectric: async () => ({}),
     readRunning: async () => true,
     sendCommand: async (c) => { sent.push(c); },
+    requestRefresh: async () => {},
   };
   const controller = new VehicleController('V', '21MM', fake, { remoteStart: !!opts.remoteStart, exposeBattery: true, prepare: opts.prepare ? { closeWindows: true, closeMoonroof: true, lockTrunk: true } : undefined, verifyDelaysMs: [0], sleep: async () => {} }, view, log);
   view.attach(controller);

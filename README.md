@@ -108,6 +108,7 @@ Set `remoteStart.prepare` to `false` to start immediately instead. Toyota allows
 | `vin` | No | all vehicles | Expose only this VIN. |
 | `generation` | No | reported by Toyota, else `21MM` | `17CY`, `17CYPLUS`, `21MM` or `24MM`. |
 | `pollIntervalMinutes` | No | `5` | Minimum 5. Backs off automatically on errors. |
+| `staleReportHours` | No | `3` | Once Toyota's report from the car is this many hours old, ask the car for a fresh one, at most once per this interval. Each request wakes the car. Minimum 3; `0` turns it off. |
 | `exposeOpenings` | No | `true` | Contact sensors for doors, windows, trunk, hood and moonroof. |
 | `exposeBattery` | No | `true` | Battery service when a charge level is reported. |
 | `remoteStart.enabled` | No | `false` | Adds the Remote Start switch. |
@@ -126,7 +127,7 @@ Toyota may email a one-time code the first time you sign in. The settings page h
 
 ## Behavior and limits
 
-- **Data is Toyota's cached report.** Lock state can be hours old on a parked car, by design.
+- **Data is Toyota's cached report.** Between the car's own uploads, lock state can be hours old on a parked car. The plugin asks the car for a fresh report once the last one is 3 hours old (`staleReportHours`), and logs each lock change with the time the car sent it.
 - **Failures back off.** Polling backs off up to an hour, and an HTTP 429 waits at least 15 minutes. Wrong credentials or a pending code pause polling until you sign in again.
 - **Refusals are explained.** When Toyota rejects a command, the log shows Toyota's own reason with tokens and VINs removed.
 - **Not supported:** location, fuel level, tire pressure, trips, climate settings, hazards, horn and charging control. [docs/design.md](docs/design.md) explains each decision.

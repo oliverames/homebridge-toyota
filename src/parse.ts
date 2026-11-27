@@ -204,8 +204,10 @@ export interface RemoteStatus {
   openings: Opening[];
   /** All reporting doors locked = true, any unlocked = false, otherwise null. */
   doorsLocked: boolean | null;
-  /** When the vehicle last uploaded this report (Toyota's occurrenceDate), if given. The report can be hours old. */
+  /** When the vehicle last uploaded this report (Toyota's occurrenceDate), as Toyota wrote it. The report can be hours old. */
   reportedAt?: string;
+  /** The same moment in epoch milliseconds, when it parses to a plausible past time. */
+  reportedAtMs?: number;
 }
 
 interface Section {
@@ -371,16 +373,39 @@ export function parseRemoteStatus(data: unknown): RemoteStatus {
       doorsLocked = true;
     }
   }
-  const reportedAt = [
-    at(data, 'payload', 'occurrenceDate'),
-    at(data, 'occurrenceDate'),
-    at(data, 'status', 'payload', 'occurrenceDate'),
-    at(data, 'vehicleStatusResponse', 'payload', 'occurrenceDate'),
-    at(data, 'data', 'occurrenceDate'),
-  ]
-    .map(str)
-    .find((value) => value !== undefined);
-  return reportedAt ? { openings, doorsLocked, reportedAt } : { openings, doorsLocked };
+  return { openings, doorsLocked, ...reportTime(data) };
+}
+
+const REPORT_TIME_ROOTS: string[][] = [[], ['payload'], ['status', 'payload'], ['vehicleStatusResponse', 'payload'], ['data']];
+/** 2000-01-01: anything earlier is a counter or an unset value, not a report time. */
+const EARLIEST_REPORT_MS = 946_684_800_000;
+
+/**
+ * The moment the vehicle itself uploaded the report, from the fields RedLink
+ * verified (`occurrenceDate`, then `lastTimestamp`). The envelope's own
+ * `timestamp` is Toyota's processing time and is never read.
+ */
+export function reportTime(data: unknown, now: number = Date.now()): { reportedAt?: string; reportedAtMs?: number } {
+  for (const root of REPORT_TIME_ROOTS) {
+    for (const key of ['occurrenceDate', 'lastTimestamp']) {
+      const value = at(data, ...root, key);
+      let ms: number | undefined;
+      if (typeof value === 'string' && value.trim() !== '') {
+        ms = Date.parse(value);
+      } else if (typeof value === 'number') {
+        ms = value > 10_000_000_000 ? value : value * 1000;
+      } else {
+        continue;
+      }
+      const text = String(value).trim();
+      // Allow a few minutes of clock skew between Toyota and this host.
+      if (ms !== undefined && Number.isFinite(ms) && ms > EARLIEST_REPORT_MS && ms <= now + 5 * 60_000) {
+        return { reportedAt: text, reportedAtMs: ms };
+      }
+      return { reportedAt: text };
+    }
+  }
+  return {};
 }
 
 /* -------------------------------------------------------------------------- */
