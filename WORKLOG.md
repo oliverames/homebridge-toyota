@@ -1,5 +1,15 @@
 # Worklog
 
+## 2026-11-27 - 0.4.0: HomeKit metadata, availability, sign-in hardening
+
+**What changed**: Oliver asked for a security pass, better Home app and Siri metadata, login robustness and reliability. Two read-only Sonnet reviews (security audit; HomeKit metadata against hap-nodejs definitions) found no high-severity issue and `npm audit` clean. 0.4.0 names every service after the vehicle with `ConfiguredName` (written only while empty), makes Doors primary, sets firmware to the plugin version, flags stale contact sensors with `StatusFault`, answers No Response while sign-in is fatal and on cached accessories before the first vehicle list, adds 30 s sign-in timeouts, a 60 s Send-code cooldown, VIN validation, per-process temp files and non-quoting JSON errors. Declined from the reviews: off-host redirect blocking (no evidence Toyota redirects; the authorize step needs manual redirects), shortening the VIN in SerialNumber, ServiceLabelIndex, LockManagement and Battery linking.
+
+**Verified**: 186 tests, lint, typecheck and build pass locally. Released as v0.4.0. Not verified on a device: how the Home app shows `StatusFault` on a contact sensor, and whether setting `ConfiguredName` replaces any rename Oliver made earlier only inside the Home app (services had no `ConfiguredName` before, so iOS kept such names locally).
+
+**Left off at**: Nothing deployed since 0.3.7; SSH has failed since the 0.3.9 attempt because the 1Password agent stopped signing. Pending on home-server: install 0.4.0 (includes 0.3.8/0.3.9 auto-lock), add `autoLock: {enabled: true, afterMinutes: 10}` (approved), restart only the Toyota bridge. Login root cause not yet found: needs `grep` of the Homebridge log for "Saved Toyota sign-in was rejected" and "Polling is paused" to see how often and why the refresh token dies.
+
+---
+
 ## 2026-11-27 - 0.3.8 and 0.3.9: auto-lock
 
 **What changed**: Oliver asked for better power, lock and temperature state and for auto-lock. Temperature is not possible: RedLink's inventory (`docs/trends-data-inventory-2026-09-06.md`) found no endpoint returning cabin, outside or battery temperature, only the climate target. No HomeKit type exists for ignition or plug state. 0.3.8 adds opt-in auto-lock ported from RedLink's `ToyotaAutoLock` (fresh zero-speed telemetry, all closed, engine and climate off, 15 min grace after a HomeKit unlock, 10 min cooldown, 3 attempts per episode) plus a 10 minute unlocked dwell and a cap of 3 fresh-report requests per episode. A background security review found two real defects in 0.3.8 (an unknown engine state counted as not running; a HomeKit unlock during the telemetry read did not stop the attempt), fixed in 0.3.9.
