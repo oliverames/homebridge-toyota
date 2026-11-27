@@ -8,7 +8,7 @@
 
 **Decisions made**: Unknown is still shown when a door lacks a lock value, and the tile still starts Unknown after a restart. Both are pinned by tests as deliberate, and the log gives no evidence of lock-less reports yet.
 
-**Left off at**: v0.3.5 is NOT deployed; home-server still runs 0.3.4. After deploying, compare the "Doors reported" lines against what the car actually showed. A stale `occurrenceDate` points at Toyota's cache (an opt-in status refresh would be the fix); a missing lock value points at parsing.
+**Left off at**: v0.3.5 is installed on home-server (0.3.4 backed up to `~/.homebridge/backups/homebridge-toyota-0.3.4-2026-11-27`), but the Toyota child bridge has not been restarted, so 0.3.4 code is still running. SSH dropped when the 1Password agent stopped signing. After deploying, compare the "Doors reported" lines against what the car actually showed. A stale `occurrenceDate` points at Toyota's cache (an opt-in status refresh would be the fix); a missing lock value points at parsing.
 
 ---
 
