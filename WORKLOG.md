@@ -1,5 +1,15 @@
 # Worklog
 
+## 2026-11-27 - 0.4.1, host hardening, deploys caught up
+
+**What changed**: SSH returned. Deployed 0.4.0 with `autoLock: {enabled: true, afterMinutes: 10}` (config backed up to `~/.homebridge/backups/config-2026-11-27-before-autolock.json`), then 0.4.1. Login history since 11/14: one emailed code (initial setup), no refresh-token rejections. Tokens: access 30 min, refresh 90 days renewed on every refresh. The one defect was the 11/25 "403: jwt expired" poll failure under the forced-refresh cooldown; 0.4.1 always refreshes on an explicit expiry, shows the sign-in lifetime on the settings page, and ignores Home hub reads for two minutes after a start (a hub reconnect read spent a wake on 11/27). Host: `~/.homebridge` was world-readable (config.json with every plugin secret, the UI TLS private key, emporia-tokens.json, HAP pairing keys in persist/); with Oliver's go-ahead it is now 700 with secret files 600 (old modes in `~/homebridge-perms-before-2026-11-27.txt`). The UI terminal is already off; the UI has one user without 2FA. Third-party crashes seen: homebridge-nest 4.6.10 (`RangeError: Could not decode varint` in nest-connection.js:647, 11/15 x2, 11/16) and homebridge-lgwebos-tv (WebSocket CLOSING, 11/10); Homebridge restarted both after 10 s.
+
+**Verified**: 189 tests, lint, typecheck and build pass locally. Live: 0.4.1 running, the restart spent no wake, the bZ reports all closed and locked (22:50:41Z), the settings status reads signed in with 90 days left. All 9 child bridges and the UI (200) ran after the permission change.
+
+**Left off at**: Not yet exercised live: an auto-lock attempt (the car has been locked since 22:50Z), a Home-app wake from a person, minute polling after a command, a Hatch lock or unlock, `StatusFault` display. Open with Oliver: enabling 2FA on the Homebridge UI, and whether to file upstream issues for the Nest and LG crashes.
+
+---
+
 ## 2026-11-27 - 0.4.0: HomeKit metadata, availability, sign-in hardening
 
 **What changed**: Oliver asked for a security pass, better Home app and Siri metadata, login robustness and reliability. Two read-only Sonnet reviews (security audit; HomeKit metadata against hap-nodejs definitions) found no high-severity issue and `npm audit` clean. 0.4.0 names every service after the vehicle with `ConfiguredName` (written only while empty), makes Doors primary, sets firmware to the plugin version, flags stale contact sensors with `StatusFault`, answers No Response while sign-in is fatal and on cached accessories before the first vehicle list, adds 30 s sign-in timeouts, a 60 s Send-code cooldown, VIN validation, per-process temp files and non-quoting JSON errors. Declined from the reviews: off-host redirect blocking (no evidence Toyota redirects; the authorize step needs manual redirects), shortening the VIN in SerialNumber, ServiceLabelIndex, LockManagement and Battery linking.
