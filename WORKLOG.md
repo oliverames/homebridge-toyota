@@ -1,5 +1,15 @@
 # Worklog
 
+## 2026-11-27 - 0.3.6: refresh stale reports
+
+**What changed**: 0.3.5 went live on home-server at 15:09 and its first line showed Toyota serving a report 3 hours 14 minutes old (16:54:58Z, unlocked). RedLink has woken the car for stale reports since 2026-11-15 at Oliver's request, so 0.3.6 ports `wakesForStaleReport`: `refresh-status` when the report is `staleReportHours` old (default and minimum 3, 0 off) and no wake in that time, the wake time saved per VIN, then about two minutes of reads for the newer report.
+
+**Verified**: 153 tests, lint, typecheck and build pass locally; the refresh request is pinned against RedLink's `ToyotaRequestFactory`. Released as v0.3.6. 0.3.5 is running on home-server (0.3.4 backup in `~/.homebridge/backups/`).
+
+**Left off at**: v0.3.6 is NOT deployed; the install was held for Oliver's go-ahead because it adds car wakes. Not yet verified live: that the bZ accepts `refresh-status` and how long its fresh report takes to appear.
+
+---
+
 ## 2026-11-27 - 0.3.5: lock state visibility
 
 **What changed**: Reviewed the home-server log from 11/14 to 11/27 after reports of an inconsistent lock state. Since 0.3.3, every Remote Start and its preparatory lock confirmed (11/19, 11/25, 11/26); the only unconfirmed lock command was the 11/16 unlock under the old 30 s window. The info log never recorded what each poll reported, so the lock tile could not be traced. 0.3.5 logs each change in the reported lock state with Toyota's `occurrenceDate`, and the per-door lock values when the state is unknown.
