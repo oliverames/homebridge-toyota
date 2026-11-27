@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.5 - 2026-11-27
+
+- Each change in the reported door lock state is logged at info level with the time the vehicle uploaded that report (Toyota's `occurrenceDate`). When the lock state is unknown, the line names each door and whether it carried a lock value. Toyota serves the car's last upload, which can be hours old, so this shows whether a HomeKit lock tile that looks wrong came from a stale report or from parsing.
+
 ## 0.3.4 - 2026-11-17
 
 - The EV battery read is parked for 12 hours only after three 403s in a row (a 400 or 404 still parks it at once). One 403 during a Toyota outage used to hide the battery for 12 hours.

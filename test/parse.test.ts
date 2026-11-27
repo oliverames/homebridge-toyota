@@ -67,6 +67,11 @@ describe('remote status', () => {
     });
     expect(s.doorsLocked).toBeNull();
   });
+  it('keeps the time the vehicle uploaded the report, when Toyota gives one', () => {
+    const doors = [{ category: 'Driver Side Door', sections: [{ section: 'Driver Side Door', values: [{ value: 'locked' }] }] }];
+    expect(status({ payload: { occurrenceDate: '2026-11-26T22:55:20Z', vehicleStatus: doors } }).reportedAt).toBe('2026-11-26T22:55:20Z');
+    expect(status({ vehicleStatus: doors }).reportedAt).toBeUndefined();
+  });
   it('an open opening dominates an earlier lock token', () => {
     const s = status({ vehicleStatus: [{ category: 'Rear Hatch', sections: [{ section: 'Rear Hatch', values: [{ value: 'unlocked' }, { value: 'open' }] }] }] });
     expect(s.openings[0]?.open).toBe(true);

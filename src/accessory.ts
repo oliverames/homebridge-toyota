@@ -1,7 +1,7 @@
 import type { API, Characteristic, CharacteristicValue, Logging, PlatformAccessory, Service } from 'homebridge';
 import type { VehicleCommand } from './api';
 import type { ControllerListener, VehicleController, VehicleState } from './controller';
-import type { VehicleSummary } from './parse';
+import type { RemoteStatus, VehicleSummary } from './parse';
 import {
   batteryState,
   contactState,
@@ -130,7 +130,11 @@ export class VehicleAccessory implements ControllerListener {
 
     if (state.status) {
       const doorsLocked = state.status.doorsLocked;
+      const previous = this.reportedLock;
       this.reportedLock = lockCurrentState(doorsLocked);
+      if (this.reportedLock !== previous) {
+        this.log.info(describeLockReport(state.status));
+      }
       this.lock.updateCharacteristic(C.LockCurrentState, this.reportedLock);
       if (!pending) {
         this.lock.updateCharacteristic(C.LockTargetState, lockTargetState(doorsLocked, LOCK_SECURED));
@@ -168,4 +172,20 @@ export class VehicleAccessory implements ControllerListener {
       }
     }
   }
+}
+
+/**
+ * One line per change in the reported lock state, so a HomeKit tile that looks
+ * wrong can be traced to Toyota's report: its age, and which doors lacked a lock value.
+ */
+export function describeLockReport(status: RemoteStatus): string {
+  const state = status.doorsLocked === true ? 'locked' : status.doorsLocked === false ? 'unlocked' : 'unknown';
+  const time = status.reportedAt ? `Toyota report from ${status.reportedAt}` : 'Toyota gave no report time';
+  let line = `Doors reported ${state} (${time}).`;
+  if (status.doorsLocked === null) {
+    const doors = status.openings.filter((o) => o.kind === 'door');
+    const detail = doors.map((o) => `${o.label}: ${o.locked === true ? 'locked' : o.locked === false ? 'unlocked' : 'no lock value'}`);
+    line += doors.length > 0 ? ` ${detail.join(', ')}.` : ' The report listed no doors.';
+  }
+  return line;
 }

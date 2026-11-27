@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { HomebridgeAPI } from 'homebridge/lib/api';
 import type { API, Logging } from 'homebridge';
-import { VehicleAccessory } from '../src/accessory';
+import { describeLockReport, VehicleAccessory } from '../src/accessory';
 import type { VehicleApi, VehicleCommand } from '../src/api';
 import { VehicleController } from '../src/controller';
 import type { RemoteStatus, VehicleSummary } from '../src/parse';
@@ -69,6 +69,22 @@ describe('VehicleAccessory with real HAP services', () => {
     const { api, accessory, view } = build();
     view.stateChanged({ status: status(null) });
     expect(accessory.getService(api.hap.Service.LockMechanism)!.getCharacteristic(api.hap.Characteristic.LockCurrentState).value).toBe(3);
+  });
+
+  it('logs each change in the reported lock state once, with the report time and the doors behind an unknown', () => {
+    const lines: string[] = [];
+    const api = new HomebridgeAPI() as unknown as API;
+    const accessory = new api.platformAccessory('Test', api.hap.uuid.generate('y'));
+    const logging = { ...log, info: (m: string) => lines.push(m) } as unknown as Logging;
+    const view = new VehicleAccessory(api, logging, accessory, vehicle, { exposeOpenings: false, exposeBattery: false, remoteStart: false });
+    view.stateChanged({ status: { ...status(true), reportedAt: '2026-11-26T22:55:20Z' } });
+    view.stateChanged({ status: status(true) });
+    view.stateChanged({ status: status(null) });
+    expect(lines).toEqual([
+      'Doors reported locked (Toyota report from 2026-11-26T22:55:20Z).',
+      'Doors reported unknown (Toyota gave no report time). Driver Side Door: no lock value.',
+    ]);
+    expect(describeLockReport({ doorsLocked: null, openings: [] })).toContain('listed no doors');
   });
 
   it('omits sensors and battery when disabled', () => {

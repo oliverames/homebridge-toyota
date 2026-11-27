@@ -204,6 +204,8 @@ export interface RemoteStatus {
   openings: Opening[];
   /** All reporting doors locked = true, any unlocked = false, otherwise null. */
   doorsLocked: boolean | null;
+  /** When the vehicle last uploaded this report (Toyota's occurrenceDate), if given. The report can be hours old. */
+  reportedAt?: string;
 }
 
 interface Section {
@@ -369,7 +371,16 @@ export function parseRemoteStatus(data: unknown): RemoteStatus {
       doorsLocked = true;
     }
   }
-  return { openings, doorsLocked };
+  const reportedAt = [
+    at(data, 'payload', 'occurrenceDate'),
+    at(data, 'occurrenceDate'),
+    at(data, 'status', 'payload', 'occurrenceDate'),
+    at(data, 'vehicleStatusResponse', 'payload', 'occurrenceDate'),
+    at(data, 'data', 'occurrenceDate'),
+  ]
+    .map(str)
+    .find((value) => value !== undefined);
+  return reportedAt ? { openings, doorsLocked, reportedAt } : { openings, doorsLocked };
 }
 
 /* -------------------------------------------------------------------------- */
