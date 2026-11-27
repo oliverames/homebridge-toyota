@@ -218,7 +218,8 @@ export type RemoteCommand =
   | 'engine-stop'
   | 'power-window-close'
   | 'sunroof-close'
-  | 'trunk-lock';
+  | 'trunk-lock'
+  | 'trunk-unlock';
 
 /** 17CY has no window, moonroof or hatch commands (RedLink lists them for 17CYPLUS, 21MM and 24MM only). */
 const LEGACY_CODES: Partial<Record<RemoteCommand, [string, number]>> = {

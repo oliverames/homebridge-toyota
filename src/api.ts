@@ -22,7 +22,7 @@ import type { PollOutcome } from './poller';
 
 const PARK_MS = 12 * 60 * 60 * 1000;
 
-export type VehicleCommand = 'lock' | 'unlock' | 'remoteStart' | 'remoteStop' | 'closeWindows' | 'closeMoonroof' | 'lockTrunk';
+export type VehicleCommand = 'lock' | 'unlock' | 'remoteStart' | 'remoteStop' | 'closeWindows' | 'closeMoonroof' | 'lockTrunk' | 'unlockTrunk';
 
 /** The vehicle-facing operations the controller needs; the real one talks to Toyota. */
 export interface VehicleApi {
@@ -112,6 +112,7 @@ export class ToyotaVehicleApi implements VehicleApi {
       closeWindows: 'power-window-close',
       closeMoonroof: 'sunroof-close',
       lockTrunk: 'trunk-lock',
+      unlockTrunk: 'trunk-unlock',
     }[command] as RemoteCommand;
     if (generation === '24MM') {
       await this.client.sendGraphQLCommand(remote, vin);

@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { nextDelayMs, MAX_BACKOFF_MS, RATE_LIMIT_FLOOR_MS } from '../src/poller';
+import { describe, expect, it, vi } from 'vitest';
+import { nextDelayMs, MAX_BACKOFF_MS, Poller, RATE_LIMIT_FLOOR_MS } from '../src/poller';
 import {
   batteryState,
   CHARGING,
@@ -58,5 +58,47 @@ describe('backoff', () => {
   });
   it('applies jitter upward only', () => {
     expect(nextDelayMs({ baseMs: base, consecutiveFailures: 0, rateLimited: false, jitter: 1 })).toBe(Math.round(base * 1.1));
+  });
+});
+
+describe('Poller fast follow-up', () => {
+  it('hurry() pulls a long healthy wait in to a minute and keeps minute polls until the window ends', async () => {
+    vi.useFakeTimers();
+    try {
+      let runs = 0;
+      const poller = new Poller(async () => { runs++; return 'ok'; }, 5 * 60_000, () => 0, () => Date.now());
+      poller.start(0);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(runs).toBe(1);
+      poller.hurry(Date.now() + 3 * 60_000);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(runs).toBe(2);
+      await vi.advanceTimersByTimeAsync(2 * 60_000);
+      expect(runs).toBe(4);
+      // The window is over: back to the 5 minute interval.
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(runs).toBe(4);
+      await vi.advanceTimersByTimeAsync(4 * 60_000);
+      expect(runs).toBe(5);
+      poller.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not cut short a backoff after failures', async () => {
+    vi.useFakeTimers();
+    try {
+      let runs = 0;
+      const poller = new Poller(async () => { runs++; return 'failed'; }, 5 * 60_000, () => 0, () => Date.now());
+      poller.start(0);
+      await vi.advanceTimersByTimeAsync(0);
+      poller.hurry(Date.now() + 10 * 60_000);
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      expect(runs).toBe(1);
+      poller.stop();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

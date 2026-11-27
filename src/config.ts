@@ -22,6 +22,8 @@ export interface ToyotaConfig {
   pollIntervalMinutes: number;
   /** Ask the vehicle for a fresh report once its last one is this many hours old. 0 = never. */
   staleReportHours: number;
+  /** Opening the vehicle in the Home app asks for a fresh report when the last one is 15+ minutes old. */
+  wakeOnHomeAppOpen: boolean;
   exposeOpenings: boolean;
   exposeBattery: boolean;
   remoteStartEnabled: boolean;
@@ -118,6 +120,7 @@ export function parseConfig(raw: Record<string, unknown>): ConfigResult {
       generation,
       pollIntervalMinutes,
       staleReportHours,
+      wakeOnHomeAppOpen: raw['wakeOnHomeAppOpen'] !== false,
       exposeOpenings: raw['exposeOpenings'] !== false,
       exposeBattery: raw['exposeBattery'] !== false,
       remoteStartEnabled,

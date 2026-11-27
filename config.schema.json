@@ -57,6 +57,12 @@
         "minimum": 5,
         "maximum": 1440
       },
+      "wakeOnHomeAppOpen": {
+        "title": "Fresh report when you open the car in the Home app",
+        "description": "When the Home app shows the car and its last report is 15 minutes old or more, ask the car for a fresh one. Wakes the car; at most eight a day from this.",
+        "type": "boolean",
+        "default": true
+      },
       "staleReportHours": {
         "title": "Ask the car for a fresh report after (hours)",
         "description": "Toyota serves the car's last upload, which can be hours old on a parked car. Once it is this old, the plugin asks the car for a fresh report, at most once per this many hours. Each request wakes the car. Default 3 (about eight a day at most), minimum 3, 0 turns it off.",
@@ -124,7 +130,7 @@
       "title": "Advanced",
       "expandable": true,
       "expanded": false,
-      "items": ["vin", "generation", "pollIntervalMinutes", "staleReportHours", "graphqlApiKey", "appVersion"]
+      "items": ["vin", "generation", "pollIntervalMinutes", "wakeOnHomeAppOpen", "staleReportHours", "graphqlApiKey", "appVersion"]
     }
   ]
 }

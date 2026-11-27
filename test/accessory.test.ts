@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { HomebridgeAPI } from 'homebridge/lib/api';
 import type { API, Logging } from 'homebridge';
-import { describeLockReport, VehicleAccessory } from '../src/accessory';
+import { describeLockReport, STALE_DISPLAY_MS, VehicleAccessory } from '../src/accessory';
 import type { VehicleApi, VehicleCommand } from '../src/api';
 import { VehicleController } from '../src/controller';
 import type { RemoteStatus, VehicleSummary } from '../src/parse';
@@ -81,7 +81,8 @@ describe('VehicleAccessory with real HAP services', () => {
     view.stateChanged({ status: { ...status(true), reportedAt: '2026-11-26T22:55:20Z' } });
     view.stateChanged({ status: status(true) });
     view.stateChanged({ status: status(null) });
-    expect(lines).toEqual([
+    expect(lines[0]).toBe('The vehicle reports: Driver Side Door (closed, locked); Rear Hatch (no position, no lock value).');
+    expect(lines.slice(1)).toEqual([
       'Doors reported locked (Toyota report from 2026-11-26T22:55:20Z).',
       'Doors reported unknown (Toyota gave no report time). Driver Side Door: no lock value.',
     ]);
@@ -135,5 +136,66 @@ describe('VehicleAccessory with real HAP services', () => {
     await new Promise((resolve) => setTimeout(resolve, 25));
     expect(power.value).toBe(false);
     expect(sent).toEqual([]);
+  });
+});
+
+describe('freshness and the hatch lock', () => {
+  const NOW = Date.parse('2026-11-27T22:00:00Z');
+  const withHatch = (hatch: boolean | null, ageMs = 0): RemoteStatus => ({
+    doorsLocked: true,
+    reportedAt: 't',
+    reportedAtMs: NOW - ageMs,
+    openings: [
+      { key: 'door:door', kind: 'door', label: 'Door', open: false, locked: true },
+      { key: 'trunk:hatch', kind: 'trunk', label: 'Hatch', open: false, locked: hatch },
+    ],
+  });
+  function make(hatchLock: boolean) {
+    const api = new HomebridgeAPI() as unknown as API;
+    const accessory = new api.platformAccessory('Test', api.hap.uuid.generate(`h${hatchLock}`));
+    const view = new VehicleAccessory(api, log, accessory, vehicle, { exposeOpenings: false, exposeBattery: false, remoteStart: false, hatchLock, now: () => NOW });
+    const hatch = () => accessory.getServiceById(api.hap.Service.LockMechanism, 'hatch-lock');
+    const doors = () => accessory.services.find((x) => x.UUID === api.hap.Service.LockMechanism.UUID && !x.subtype)!;
+    return { api, view, hatch, doors };
+  }
+
+  it('shows the doors as unknown once the report is too old to trust', () => {
+    const { api, view, doors } = make(false);
+    view.stateChanged({ status: withHatch(null, STALE_DISPLAY_MS - 60_000) });
+    expect(doors().getCharacteristic(api.hap.Characteristic.LockCurrentState).value).toBe(1);
+    view.stateChanged({ status: withHatch(null, STALE_DISPLAY_MS + 60_000) });
+    expect(doors().getCharacteristic(api.hap.Characteristic.LockCurrentState).value).toBe(3);
+  });
+
+  it('adds a Hatch lock only when the vehicle has the command and reports a hatch lock value', () => {
+    const none = make(true);
+    none.view.stateChanged({ status: withHatch(null) });
+    expect(none.hatch()).toBeUndefined();
+    const noCommand = make(false);
+    noCommand.view.stateChanged({ status: withHatch(true) });
+    expect(noCommand.hatch()).toBeUndefined();
+    const { api, view, hatch } = make(true);
+    view.stateChanged({ status: withHatch(false) });
+    expect(hatch()!.getCharacteristic(api.hap.Characteristic.LockCurrentState).value).toBe(0);
+    view.stateChanged({ status: withHatch(true) });
+    expect(hatch()!.getCharacteristic(api.hap.Characteristic.LockCurrentState).value).toBe(1);
+    view.stateChanged({ status: withHatch(null) });
+    expect(hatch()!.getCharacteristic(api.hap.Characteristic.LockCurrentState).value).toBe(3);
+  });
+
+  it('the Hatch lock sends trunk-lock and trunk-unlock', async () => {
+    const { api, view, hatch } = make(true);
+    const sent: VehicleCommand[] = [];
+    const controller = new VehicleController('V', '21MM', {
+      listVehicles: async () => [], readElectric: async () => ({}), readRunning: async () => false, requestRefresh: async () => {},
+      readStatus: async () => withHatch(sent.at(-1) === 'unlockTrunk' ? false : true),
+      sendCommand: async (c) => { sent.push(c); },
+    }, { remoteStart: false, exposeBattery: false, verifyDelaysMs: [0], sleep: async () => {} }, view, log);
+    view.attach(controller);
+    view.stateChanged({ status: withHatch(true) });
+    const target = hatch()!.getCharacteristic(api.hap.Characteristic.LockTargetState);
+    await target.handleSetRequest(0);
+    await vi.waitFor(() => expect(sent).toEqual(['unlockTrunk']));
+    await vi.waitFor(() => expect(hatch()!.getCharacteristic(api.hap.Characteristic.LockCurrentState).value).toBe(0));
   });
 });

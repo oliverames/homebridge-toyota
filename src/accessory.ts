@@ -16,9 +16,19 @@ export interface AccessoryOptions {
   exposeOpenings: boolean;
   exposeBattery: boolean;
   remoteStart: boolean;
+  /** The vehicle has a remote hatch lock command; a Hatch lock appears once it also reports a hatch lock value. */
+  hatchLock?: boolean;
+  now?: () => number;
 }
 
 const REMOTE_START_SUBTYPE = 'remote-start';
+const HATCH_LOCK_SUBTYPE = 'hatch-lock';
+/**
+ * A report this old is shown as Unknown rather than a confident Locked or
+ * Unlocked. With fresh-report requests every 3 hours it only happens when
+ * those are failing or turned off.
+ */
+export const STALE_DISPLAY_MS = 12 * 60 * 60 * 1000;
 
 export class VehicleAccessory implements ControllerListener {
   private readonly Service: typeof Service;
@@ -28,6 +38,10 @@ export class VehicleAccessory implements ControllerListener {
   private remoteSwitch?: Service;
   private reportedLock = LOCK_UNKNOWN;
   private reportedRunning = false;
+  private hatch?: Service;
+  private reportedHatch = LOCK_UNKNOWN;
+  private openingsLogged = false;
+  private readonly now: () => number;
 
   constructor(
     private readonly api: API,
@@ -38,6 +52,7 @@ export class VehicleAccessory implements ControllerListener {
   ) {
     this.Service = api.hap.Service;
     this.Characteristic = api.hap.Characteristic;
+    this.now = options.now ?? Date.now;
     const { Service: S, Characteristic: C } = this;
 
     accessory.getService(S.AccessoryInformation)!
@@ -46,9 +61,14 @@ export class VehicleAccessory implements ControllerListener {
       .setCharacteristic(C.SerialNumber, vehicle.vin);
 
     // Doors: the one native service every Toyota with remote lock maps to.
-    this.lock = accessory.getService(S.LockMechanism) ?? accessory.addService(S.LockMechanism, 'Doors');
+    this.lock =
+      accessory.services.find((s) => s.UUID === S.LockMechanism.UUID && !s.subtype) ?? accessory.addService(S.LockMechanism, 'Doors');
     this.lock.setCharacteristic(C.Name, 'Doors');
-    this.lock.getCharacteristic(C.LockCurrentState).onGet(() => this.reportedLock);
+    this.lock.getCharacteristic(C.LockCurrentState).onGet(() => {
+      // The Home app reading the lock means someone is looking at the car.
+      this.controller?.noteInterest();
+      return this.reportedLock;
+    });
     this.lock
       .getCharacteristic(C.LockTargetState)
       .onGet(() => (this.reportedLock === LOCK_UNSECURED ? LOCK_UNSECURED : LOCK_SECURED))
@@ -56,6 +76,12 @@ export class VehicleAccessory implements ControllerListener {
     this.lock.updateCharacteristic(C.LockCurrentState, this.reportedLock);
 
     this.configureRemoteStart();
+    const cachedHatch = accessory.getServiceById(S.LockMechanism, HATCH_LOCK_SUBTYPE);
+    if (cachedHatch && options.hatchLock) {
+      this.configureHatch(cachedHatch);
+    } else if (cachedHatch) {
+      accessory.removeService(cachedHatch);
+    }
     if (!options.exposeOpenings) {
       this.removeAll(S.ContactSensor.UUID);
     }
@@ -93,6 +119,17 @@ export class VehicleAccessory implements ControllerListener {
       });
   }
 
+  private configureHatch(service: Service): void {
+    const { Characteristic: C } = this;
+    this.hatch = service;
+    service.setCharacteristic(C.Name, 'Hatch');
+    service.getCharacteristic(C.LockCurrentState).onGet(() => this.reportedHatch);
+    service
+      .getCharacteristic(C.LockTargetState)
+      .onGet(() => (this.reportedHatch === LOCK_UNSECURED ? LOCK_UNSECURED : LOCK_SECURED))
+      .onSet((value) => this.dispatch(value === C.LockTargetState.SECURED ? 'lockTrunk' : 'unlockTrunk'));
+  }
+
   private setLockTarget(value: CharacteristicValue): void {
     this.dispatch(value === this.Characteristic.LockTargetState.SECURED ? 'lock' : 'unlock');
   }
@@ -117,10 +154,28 @@ export class VehicleAccessory implements ControllerListener {
     const { Characteristic: C } = this;
     this.log.warn(`${command} did not complete (${reason}); showing the vehicle's reported state.`);
     if (command === 'lock' || command === 'unlock') {
-      const doorsLocked = this.reportedLock === LOCK_SECURED ? true : this.reportedLock === LOCK_UNSECURED ? false : null;
-      this.lock.updateCharacteristic(C.LockTargetState, lockTargetState(doorsLocked, LOCK_SECURED));
+      this.lock.updateCharacteristic(C.LockTargetState, lockTargetState(asLocked(this.reportedLock), LOCK_SECURED));
+    } else if (command === 'lockTrunk' || command === 'unlockTrunk') {
+      this.hatch?.updateCharacteristic(C.LockTargetState, lockTargetState(asLocked(this.reportedHatch), LOCK_SECURED));
     } else {
       this.remoteSwitch?.updateCharacteristic(C.On, this.reportedRunning);
+    }
+  }
+
+  private updateHatch(status: RemoteStatus, tooOld: boolean, pending: boolean): void {
+    const { Service: S, Characteristic: C } = this;
+    const locked = tooOld ? null : hatchLocked(status);
+    if (!this.hatch) {
+      if (!this.options.hatchLock || hatchLocked(status) === null) {
+        return;
+      }
+      this.configureHatch(this.accessory.addService(S.LockMechanism, 'Hatch', HATCH_LOCK_SUBTYPE));
+      this.log.info('The vehicle reports a hatch lock state, so a Hatch lock is now in HomeKit.');
+    }
+    this.reportedHatch = lockCurrentState(locked);
+    this.hatch!.updateCharacteristic(C.LockCurrentState, this.reportedHatch);
+    if (!pending) {
+      this.hatch!.updateCharacteristic(C.LockTargetState, lockTargetState(locked, LOCK_SECURED));
     }
   }
 
@@ -129,16 +184,27 @@ export class VehicleAccessory implements ControllerListener {
     const pending = this.controller?.commandPending === true;
 
     if (state.status) {
-      const doorsLocked = state.status.doorsLocked;
+      const status = state.status;
+      if (!this.openingsLogged && status.openings.length > 0) {
+        this.openingsLogged = true;
+        this.log.info(describeOpenings(status));
+      }
+      const tooOld = status.reportedAtMs !== undefined && this.now() - status.reportedAtMs > STALE_DISPLAY_MS;
+      const doorsLocked = tooOld ? null : status.doorsLocked;
       const previous = this.reportedLock;
       this.reportedLock = lockCurrentState(doorsLocked);
       if (this.reportedLock !== previous) {
-        this.log.info(describeLockReport(state.status));
+        this.log.info(
+          tooOld
+            ? `Showing the doors as unknown: the vehicle's last report (${status.reportedAt ?? 'no time'}) is too old to trust.`
+            : describeLockReport(status),
+        );
       }
       this.lock.updateCharacteristic(C.LockCurrentState, this.reportedLock);
       if (!pending) {
         this.lock.updateCharacteristic(C.LockTargetState, lockTargetState(doorsLocked, LOCK_SECURED));
       }
+      this.updateHatch(status, tooOld, pending);
       if (this.options.exposeOpenings) {
         for (const opening of state.status.openings) {
           const value = contactState(opening.open);
@@ -172,6 +238,29 @@ export class VehicleAccessory implements ControllerListener {
       }
     }
   }
+}
+
+function asLocked(state: number): boolean | null {
+  return state === LOCK_SECURED ? true : state === LOCK_UNSECURED ? false : null;
+}
+
+/** The hatch's own lock value: locked only if every reporting hatch is, unlocked if any is not. */
+export function hatchLocked(status: RemoteStatus): boolean | null {
+  const values = status.openings.filter((o) => o.kind === 'trunk' && o.locked !== null).map((o) => o.locked);
+  if (values.length === 0) {
+    return null;
+  }
+  return values.every((v) => v === true);
+}
+
+/** Logged once per start: every opening the vehicle reports, with its position and lock value. */
+export function describeOpenings(status: RemoteStatus): string {
+  const word = (v: boolean | null, yes: string, no: string): string => (v === true ? yes : v === false ? no : `no ${yes === 'open' ? 'position' : 'lock value'}`);
+  const parts = status.openings.map((o) => {
+    const lock = o.kind === 'door' || o.kind === 'trunk' ? `, ${word(o.locked, 'locked', 'unlocked')}` : '';
+    return `${o.label} (${word(o.open, 'open', 'closed')}${lock})`;
+  });
+  return `The vehicle reports: ${parts.join('; ')}.`;
 }
 
 /**

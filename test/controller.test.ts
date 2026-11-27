@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { VehicleApi, VehicleCommand } from '../src/api';
 import { OtpRequiredError } from '../src/auth';
 import { ApiHttpError, ClientKeyRejectedError } from '../src/client';
@@ -306,5 +306,51 @@ describe('fresh report requests', () => {
     off.statuses = [report(true, 10 * HOUR)];
     await wakeSetup(off, undefined, 0).controller.poll();
     expect(off.refreshes).toBe(0);
+  });
+});
+
+describe('Home app wakes and activity', () => {
+  const MIN = 60_000;
+  const NOW = Date.parse('2026-11-27T22:00:00Z');
+  function interest(ageMs: number) {
+    const api = new FakeApi();
+    api.statuses = [{ openings: [], doorsLocked: true, reportedAt: 't', reportedAtMs: NOW - ageMs }];
+    let now = NOW;
+    let activity = 0;
+    const controller = new VehicleController(
+      'VIN', '21MM', api,
+      { remoteStart: false, exposeBattery: false, interestWakeMs: 15 * MIN, wakeWaitDelaysMs: [0], verifyDelaysMs: [0], now: () => now, sleep: async () => {}, onActivity: () => { activity++; } },
+      { stateChanged() {}, commandFailed() {} }, noop,
+    );
+    return { api, controller, advance: (ms: number) => { now += ms; }, activity: () => activity };
+  }
+
+  it('opening the car in the Home app wakes it when the report is 15 minutes old, not when it is newer', async () => {
+    const fresh = interest(5 * MIN);
+    await fresh.controller.poll();
+    fresh.controller.noteInterest();
+    expect(fresh.api.refreshes).toBe(0);
+    const old = interest(20 * MIN);
+    await old.controller.poll();
+    old.controller.noteInterest();
+    old.controller.noteInterest();
+    await vi.waitFor(() => expect(old.api.refreshes).toBe(1));
+  });
+
+  it('caps Home app wakes at eight a day', async () => {
+    const t = interest(10 * 60 * MIN);
+    await t.controller.poll();
+    for (let i = 0; i < 12; i++) {
+      t.controller.noteInterest();
+      await new Promise((r) => setImmediate(r));
+      t.advance(20 * MIN);
+    }
+    expect(t.api.refreshes).toBe(8);
+  });
+
+  it('a finished command asks for closer polling', async () => {
+    const t = interest(MIN);
+    await t.controller.command('lock');
+    expect(t.activity()).toBe(1);
   });
 });

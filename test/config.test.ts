@@ -26,6 +26,8 @@ describe('parseConfig', () => {
     expect(r.warnings.join(' ')).toContain('staleReportHours');
     expect(parseConfig({ ...base, staleReportHours: 0 }).config?.staleReportHours).toBe(0);
     expect(parseConfig({ ...base, staleReportHours: 6 }).config?.staleReportHours).toBe(6);
+    expect(parseConfig(base).config?.wakeOnHomeAppOpen).toBe(true);
+    expect(parseConfig({ ...base, wakeOnHomeAppOpen: false }).config?.wakeOnHomeAppOpen).toBe(false);
   });
   it('remote start is opt-in', () => {
     expect(parseConfig({ ...base, remoteStart: { enabled: true } }).config?.remoteStartEnabled).toBe(true);

@@ -41,6 +41,14 @@ export interface ControllerOptions {
   wakeStore?: WakeStore;
   /** Pauses between status reads while waiting for the fresh report. */
   wakeWaitDelaysMs?: number[];
+  /**
+   * Looking at the vehicle in the Home app asks for a fresh report once the
+   * last one is this old and no wake went out within it (RedLink's app-open
+   * wake, 15 minutes). 0 or unset: never.
+   */
+  interestWakeMs?: number;
+  /** Something just happened (a command, a wake, the engine running): poll closely for a while. */
+  onActivity?: () => void;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
 }
@@ -56,6 +64,9 @@ export interface WakeStore {
  * Remote Start. The reads are cheap cached GETs.
  */
 export const DEFAULT_VERIFY_DELAYS_MS = [10_000, 10_000, 10_000, 10_000, 10_000, 10_000];
+/** At most this many Home-app wakes in any 24 hours, in case a home hub reads the lock on its own. */
+export const MAX_INTEREST_WAKES_PER_DAY = 8;
+const DAY_MS = 24 * 60 * 60 * 1000;
 /** A parked car takes a while to wake and upload; about two minutes, then the next poll picks it up. */
 export const DEFAULT_WAKE_WAIT_DELAYS_MS = [20_000, 20_000, 20_000, 30_000, 30_000];
 const PARK_MS = 12 * 60 * 60 * 1000;
@@ -75,6 +86,8 @@ export class VehicleController {
   private readonly delays: number[];
   private lastWake?: number;
   private refreshUnsupported = false;
+  private waking = false;
+  private interestWakes: number[] = [];
 
   constructor(
     readonly vin: string,
@@ -145,6 +158,9 @@ export class VehicleController {
     }
 
     this.emit();
+    if (this.state.running === true) {
+      this.activity();
+    }
     if (worst === 'ok') {
       worst = await this.refreshIfStale();
     }
@@ -162,19 +178,61 @@ export class VehicleController {
    */
   private async refreshIfStale(): Promise<PollOutcome> {
     const staleMs = this.options.staleReportMs ?? 0;
-    const status = this.state.status;
-    if (staleMs <= 0 || this.refreshUnsupported || this.pending || !status) {
+    if (staleMs <= 0 || !this.wakeAllowed(staleMs)) {
       return 'ok';
+    }
+    return this.wake(staleMs);
+  }
+
+  /**
+   * The Home app is showing this vehicle (HomeKit read the lock). Ask for a
+   * fresh report in the background when the last one is older than
+   * `interestWakeMs`, within a daily cap. Returns at once.
+   */
+  noteInterest(): void {
+    const minimumMs = this.options.interestWakeMs ?? 0;
+    if (minimumMs <= 0 || !this.wakeAllowed(minimumMs)) {
+      return;
     }
     const now = this.now();
-    const reportedAtMs = status.reportedAtMs;
-    if (reportedAtMs !== undefined && now - reportedAtMs < staleMs) {
-      return 'ok';
+    this.interestWakes = this.interestWakes.filter((t) => now - t < DAY_MS);
+    if (this.interestWakes.length >= MAX_INTEREST_WAKES_PER_DAY) {
+      return;
+    }
+    this.interestWakes.push(now);
+    void this.wake(minimumMs, 'The Home app is showing the vehicle');
+  }
+
+  /** True when the report is at least `minimumMs` old and no wake went out within it. */
+  private wakeAllowed(minimumMs: number): boolean {
+    const status = this.state.status;
+    if (this.refreshUnsupported || this.pending || this.waking || !status) {
+      return false;
+    }
+    const now = this.now();
+    if (status.reportedAtMs !== undefined && now - status.reportedAtMs < minimumMs) {
+      return false;
     }
     this.lastWake ??= this.options.wakeStore?.load();
-    if (this.lastWake !== undefined && now - this.lastWake >= 0 && now - this.lastWake < staleMs) {
+    return !(this.lastWake !== undefined && now - this.lastWake >= 0 && now - this.lastWake < minimumMs);
+  }
+
+  /** Sends refresh-status and waits briefly for the newer report. Never throws. */
+  private async wake(retryMs: number, reason?: string): Promise<PollOutcome> {
+    this.waking = true;
+    try {
+      return await this.wakeOnce(retryMs, reason);
+    } catch (error) {
+      this.log.warn(`Unexpected error while asking for a fresh report: ${describe(error)}`);
       return 'ok';
+    } finally {
+      this.waking = false;
     }
+  }
+
+  private async wakeOnce(retryMs: number, reason?: string): Promise<PollOutcome> {
+    const now = this.now();
+    const reportedAtMs = this.state.status?.reportedAtMs;
     // Recorded before sending, so a failure or a crash still waits a full interval.
     this.lastWake = now;
     try {
@@ -183,8 +241,8 @@ export class VehicleController {
       this.log.debug(`Could not save the wake time: ${describe(error)}`);
     }
     const age = reportedAtMs === undefined ? 'has no report time' : `is ${formatAge(now - reportedAtMs)} old`;
-    const retry = formatAge(staleMs);
-    this.log.info(`The vehicle's last report ${age}; asking it for a fresh one.`);
+    const retry = formatAge(retryMs);
+    this.log.info(`${reason ? `${reason} and its` : "The vehicle's"} last report ${age}; asking it for a fresh one.`);
     try {
       await this.api.requestRefresh(this.vin, this.generation);
     } catch (error) {
@@ -193,10 +251,11 @@ export class VehicleController {
         this.log.info(`${describe(error)} Lock state will be as fresh as the vehicle's own reports.`);
         return 'ok';
       }
-      this.log.warn(`Toyota refused the request for a fresh report: ${describe(error)} Trying again in ${retry}.`);
+      this.log.warn(`Toyota refused the request for a fresh report: ${describe(error)} Trying again in ${retry} at the earliest.`);
       const outcome = classifyError(error);
       return outcome === 'rateLimited' ? outcome : 'ok';
     }
+    this.activity();
     for (const delay of this.options.wakeWaitDelaysMs ?? DEFAULT_WAKE_WAIT_DELAYS_MS) {
       await this.sleep(delay);
       let fresh: RemoteStatus;
@@ -218,6 +277,14 @@ export class VehicleController {
     }
     this.log.info(`The vehicle has not sent a fresh report yet; a later poll will show it if it arrives. Next request in ${retry} at the earliest.`);
     return 'ok';
+  }
+
+  private activity(): void {
+    try {
+      this.options.onActivity?.();
+    } catch (error) {
+      this.log.debug(`Could not speed up polling: ${describe(error)}`);
+    }
   }
 
   /**
@@ -253,6 +320,7 @@ export class VehicleController {
       }
     } finally {
       this.pending = undefined;
+      this.activity();
     }
   }
 
@@ -413,6 +481,8 @@ export class VehicleController {
         return openings.every((o) => o.kind !== 'roof' || o.open !== true);
       case 'lockTrunk':
         return openings.every((o) => o.kind !== 'trunk' || o.locked !== false);
+      case 'unlockTrunk':
+        return openings.some((o) => o.kind === 'trunk' && o.locked === false);
     }
   }
 

@@ -7,7 +7,7 @@ import { ToyotaClient } from './client';
 import { parseConfig, type ToyotaConfig } from './config';
 import { describe, VehicleController, type WakeStore } from './controller';
 import { type Generation, prepareCapabilities, type VehicleSummary } from './parse';
-import { Poller, type PollOutcome } from './poller';
+import { FAST_POLL_WINDOW_MS, Poller, type PollOutcome } from './poller';
 import { FileStore, isSession, type Session } from './session';
 import { PLATFORM_NAME, PLUGIN_NAME } from './settings';
 import { isVehicleStatus, type VehicleStatus } from './ui';
@@ -22,6 +22,9 @@ function isPending(value: unknown): value is PendingChallenge {
 const SESSION_WATCH_MS = 30_000;
 
 const mask = (vin: string): string => `…${vin.slice(-4)}`;
+
+/** RedLink's app-open rule: no wake within 15 minutes of a wake or of the car's own report. */
+const INTEREST_WAKE_MS = 15 * 60 * 1000;
 
 export class ToyotaPlatform implements DynamicPlatformPlugin {
   private readonly cached = new Map<string, PlatformAccessory>();
@@ -207,7 +210,13 @@ export class ToyotaPlatform implements DynamicPlatformPlugin {
     const subscriptions = vehicle.subscriptions.map((s) => `${s.name}: ${s.status ?? 'unknown'}`).join(', ') || 'none reported';
     this.log.info(`${vehicle.displayName}: generation ${generation ?? DEFAULT_GENERATION}; remote capabilities [${vehicle.capabilities.join(', ') || 'none reported'}]; subscriptions: ${subscriptions}.`);
 
-    const options = { exposeOpenings: config.exposeOpenings, exposeBattery: config.exposeBattery, remoteStart: config.remoteStartEnabled };
+    const capabilities = prepareCapabilities(vehicle, generation ?? DEFAULT_GENERATION);
+    const options = {
+      exposeOpenings: config.exposeOpenings,
+      exposeBattery: config.exposeBattery,
+      remoteStart: config.remoteStartEnabled,
+      hatchLock: capabilities.lockTrunk,
+    };
     const view = new VehicleAccessory(this.api, this.log, accessory, vehicle, options);
     const controller = new VehicleController(
       vehicle.vin,
@@ -217,9 +226,11 @@ export class ToyotaPlatform implements DynamicPlatformPlugin {
         remoteStart: config.remoteStartEnabled,
         exposeBattery: config.exposeBattery,
         electricHint: looksElectric(vehicle),
-        prepare: config.remoteStartEnabled && config.remoteStartPrepare ? prepareCapabilities(vehicle, generation ?? DEFAULT_GENERATION) : undefined,
+        prepare: config.remoteStartEnabled && config.remoteStartPrepare ? capabilities : undefined,
         staleReportMs: config.staleReportHours * 60 * 60 * 1000,
         wakeStore: this.wakeStore(vehicle.vin),
+        interestWakeMs: config.wakeOnHomeAppOpen ? INTEREST_WAKE_MS : 0,
+        onActivity: () => this.poller?.hurry(Date.now() + FAST_POLL_WINDOW_MS),
       },
       view,
       this.log,

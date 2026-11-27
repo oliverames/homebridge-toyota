@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.7 - 2026-11-27
+
+- Opening the car in the Home app asks it for a fresh report when the last one is 15 minutes old or more (RedLink's app-open rule), at most eight times a day. `wakeOnHomeAppOpen: false` turns it off.
+- After a command, a fresh-report request, or while the engine is running, status is read every minute for 10 minutes instead of every 5, so the car locking itself or a remote start ending shows up quickly.
+- A Hatch lock appears in HomeKit when the vehicle has the remote hatch command and reports a hatch lock value. It sends `trunk-lock` and `trunk-unlock`.
+- Locks show Unknown when the car's last report is more than 12 hours old, instead of a confident state from old data.
+- The first report after a start logs every opening with its position and lock value.
+
 ## 0.3.6 - 2026-11-27
 
 - Stale reports are refreshed. Toyota serves the car's last upload, and on 2026-11-27 the plugin started on a report 3 hours 14 minutes old. Once the report is `staleReportHours` old (default and minimum 3, `0` turns it off) and no request went out within that time, the plugin asks the car for a fresh report (`refresh-status`, as RedLink does since 2026-11-15) and watches for it for about two minutes. Each request wakes the car, so the last request time is saved per vehicle and survives restarts; a parked car gets at most about eight a day. A wake sent by RedLink or the Toyota app shows up as a fresh report, so none is added on top. Not available on 24MM vehicles.

@@ -108,6 +108,7 @@ Set `remoteStart.prepare` to `false` to start immediately instead. Toyota allows
 | `vin` | No | all vehicles | Expose only this VIN. |
 | `generation` | No | reported by Toyota, else `21MM` | `17CY`, `17CYPLUS`, `21MM` or `24MM`. |
 | `pollIntervalMinutes` | No | `5` | Minimum 5. Backs off automatically on errors. |
+| `wakeOnHomeAppOpen` | No | `true` | When the Home app shows the car and its report is 15+ minutes old, ask the car for a fresh one. At most eight a day. |
 | `staleReportHours` | No | `3` | Once Toyota's report from the car is this many hours old, ask the car for a fresh one, at most once per this interval. Each request wakes the car. Minimum 3; `0` turns it off. |
 | `exposeOpenings` | No | `true` | Contact sensors for doors, windows, trunk, hood and moonroof. |
 | `exposeBattery` | No | `true` | Battery service when a charge level is reported. |
