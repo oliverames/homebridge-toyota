@@ -33,6 +33,12 @@ Limits, as in RedLink: 15 minutes of grace after an unlock from HomeKit, 10 minu
 
 HomeKit has no auto-lock setting the Home app shows (`LockManagement` is not surfaced), so it is configured in the plugin settings. Home app automations ("when I leave, lock Doors") remain the native way to lock on departure.
 
+### Names, metadata and availability (0.4.0)
+
+Every service carries the vehicle's name (Toyota nickname, else the accessory name) in both `Name` and `ConfiguredName`. iOS reads `ConfiguredName` for added services, and Siri matches it. `ConfiguredName` is written only while empty, so a Home app rename survives restarts. The Doors lock is the primary service. `FirmwareRevision` is the plugin version from `package.json`.
+
+HomeKit shows No Response (`SERVICE_COMMUNICATION_FAILURE`) in two cases only: while sign-in needs attention (a `fatal` poll outcome), and on a cached accessory before the first vehicle list, where writes would otherwise be accepted with no handler behind them. Ordinary outages keep last-known values, and the 12-hour freshness rule marks locks Unknown and contact sensors with `StatusFault`.
+
 ## Rejected options
 
 - **Fuel level as `Battery`.** A gas tank is not a battery, and `Battery` carries low-battery and charging semantics that would be false. Fuel level is never exposed. A hybrid's traction battery is not exposed either unless Toyota reports a charge level.

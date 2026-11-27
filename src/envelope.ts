@@ -12,7 +12,7 @@ export function parseEnvelope(text: string): Envelope {
   if (text.trim() === '') {
     return { status: 'ok', data: undefined, raw: undefined };
   }
-  const raw: unknown = JSON.parse(text);
+  const raw = parseJson(text);
   const object = isObject(raw) ? raw : undefined;
   const payload = object?.['payload'];
   return {
@@ -121,4 +121,16 @@ export function findRejection(envelope: Envelope): Rejection | undefined {
     return { code: envelope.status, message: envelope.message };
   }
   return rejectionIn(envelope.raw, envelope.message) ?? rejectionIn(envelope.data, envelope.message);
+}
+
+/**
+ * JSON.parse with a fixed message: Node's own SyntaxError quotes the start of
+ * the body, which is how an HTML error page (or worse) would reach the log.
+ */
+export function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`Toyota returned a response that is not JSON (${text.length} bytes).`);
+  }
 }

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.4.0 - 2026-11-27
+
+HomeKit
+- Every service is named after the vehicle ("Odysseus Doors", "Odysseus Hatch", "Odysseus Remote Start", "Odysseus EV Battery", "Odysseus Window"), with `ConfiguredName` set so iOS and Siri use it. A name you set in the Home app is never overwritten: `ConfiguredName` is written only while it is empty. The vehicle name also keeps "Window" or "Door" from colliding with the house's own sensors.
+- The Doors lock is the primary service, so the Home tile and Siri answers follow it. The accessory's firmware revision is the plugin version.
+- Contact sensors report a fault when the car's last report is over 12 hours old, matching the locks' Unknown.
+- While Toyota sign-in needs attention, the vehicle answers No Response in HomeKit instead of showing stale state.
+- After a restart, until Toyota answers, a lock or Remote Start tap answers No Response instead of being accepted and dropped.
+
+Security and sign-in
+- Sign-in and token requests time out after 30 seconds. A stalled sign-in server used to hold every poll and command for about five minutes.
+- The settings page refuses a second Send code within a minute, so repeated clicks cannot flood the inbox with codes.
+- Session and other state files are written through a per-process temporary file, since the plugin and the settings page both write the session.
+- A VIN must be 17 letters and digits before it is used, because it also names the per-vehicle state files.
+- A response that is not JSON is reported with its length only, never a quote of the body.
+
 ## 0.3.9 - 2026-11-27
 
 - Auto-lock reads the engine and climate state itself when Remote Start is off, and does not lock when that state is unknown. 0.3.8 treated an unknown state as not running.

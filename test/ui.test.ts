@@ -8,7 +8,7 @@ import { parseConfig } from '../src/config';
 import { Poller } from '../src/poller';
 import { FileStore, isSession, type Session } from '../src/session';
 import { ACCESS_TOKEN_URL, API_GATEWAY, AUTHENTICATE_URL, AUTHORIZE_URL } from '../src/settings';
-import { SignInService } from '../src/ui';
+import { START_COOLDOWN_MS, SignInService } from '../src/ui';
 import { vehicleList } from './fixtures';
 import { jsonResponse, mockFetch, tokenBody } from './helpers';
 
@@ -157,12 +157,26 @@ describe('SignInService', () => {
   it('starting again discards the old challenge and requests a fresh code', async () => {
     const ws = workspace();
     const net = toyota();
-    const svc = service(ws, net);
+    let now = NOW;
+    const svc = new SignInService({ storagePath: ws.storagePath, configPath: ws.configPath, fetchFn: net.fn, now: () => now });
     await svc.start();
+    now += START_COOLDOWN_MS;
     await svc.start();
     // two full logins began from scratch: two requests without an authId
     const fresh = net.calls.filter((c) => c.url === AUTHENTICATE_URL && !(JSON.parse(String(c.init?.body)) as { authId?: string }).authId);
     expect(fresh).toHaveLength(2);
+  });
+
+  it('refuses a second Send code within a minute, so Toyota does not email a flood of codes', async () => {
+    const ws = workspace();
+    const net = toyota();
+    const svc = service(ws, net);
+    await svc.start();
+    const calls = net.calls.length;
+    const second = await svc.start();
+    expect(second.outcome).toBe('error');
+    expect(second.message).toContain('less than a minute ago');
+    expect(net.calls.length).toBe(calls);
   });
 
   it('reports wrong credentials without echoing them', async () => {

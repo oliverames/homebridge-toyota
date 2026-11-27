@@ -89,12 +89,16 @@ function safeMessage(error: unknown): string {
  * the pending Toyota challenge lives in memory and the session file is the only
  * thing handed to the platform.
  */
+/** Each Send code makes Toyota email a new code, so clicks closer than this are refused. */
+export const START_COOLDOWN_MS = 60_000;
+
 export class SignInService {
   private readonly challenges = new MemoryChallenges();
   private readonly sessions: FileStore<Session>;
   private readonly oldChallengeFile: FileStore<PendingChallenge>;
   private readonly statusFile: FileStore<VehicleStatus>;
   private readonly now: () => number;
+  private lastStart?: number;
   private busy = false;
 
   constructor(private readonly options: SignInServiceOptions) {
@@ -157,6 +161,12 @@ export class SignInService {
 
   /** Starts a fresh login with the saved credentials. Toyota emails a code when it wants one. */
   async start(): Promise<UiResult> {
+    const now = this.now();
+    if (this.lastStart !== undefined && now - this.lastStart < START_COOLDOWN_MS) {
+      // Each start makes Toyota email a new code; repeated clicks would flood the inbox.
+      return this.result('error', `A code was requested less than a minute ago. Check your email, or try again in ${Math.ceil((START_COOLDOWN_MS - (now - this.lastStart)) / 1000)} seconds.`);
+    }
+    this.lastStart = now;
     return this.guarded(async () => {
       const { config, problem } = this.readConfig();
       if (!config) {

@@ -30,6 +30,7 @@ const INTEREST_WAKE_MS = 15 * 60 * 1000;
 export class ToyotaPlatform implements DynamicPlatformPlugin {
   private readonly cached = new Map<string, PlatformAccessory>();
   private readonly controllers: VehicleController[] = [];
+  private readonly views: VehicleAccessory[] = [];
   private readonly config?: ToyotaConfig;
   private poller?: Poller;
   private discovered = false;
@@ -61,6 +62,27 @@ export class ToyotaPlatform implements DynamicPlatformPlugin {
 
   configureAccessory(accessory: PlatformAccessory): void {
     this.cached.set(accessory.UUID, accessory);
+    this.refuseUntilReady(accessory);
+  }
+
+  /**
+   * A cached accessory has no handlers until Toyota answers the first vehicle
+   * list. Until then a lock or switch write would be accepted and dropped, so
+   * answer No Response instead. VehicleAccessory replaces these handlers.
+   */
+  private refuseUntilReady(accessory: PlatformAccessory): void {
+    const { Characteristic: C, HapStatusError, HAPStatus } = this.api.hap;
+    const refuse = (): never => {
+      throw new HapStatusError(HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+    };
+    for (const service of accessory.services) {
+      if (service.testCharacteristic(C.LockTargetState)) {
+        service.getCharacteristic(C.LockTargetState).onSet(refuse);
+      }
+      if (service.UUID === this.api.hap.Service.Switch.UUID) {
+        service.getCharacteristic(C.On).onSet(refuse);
+      }
+    }
   }
 
   private start(): void {
@@ -155,6 +177,10 @@ export class ToyotaPlatform implements DynamicPlatformPlugin {
   }
 
   private report(outcome: PollOutcome, message: string | undefined): void {
+    // Signed out: HomeKit shows No Response rather than stale state. Any other outcome keeps the last values.
+    for (const view of this.views) {
+      view.setUnavailable(outcome === 'fatal');
+    }
     if (outcome === 'ok') {
       if (this.degraded) {
         this.log.info('Toyota connected services are reachable again.');
@@ -244,6 +270,7 @@ export class ToyotaPlatform implements DynamicPlatformPlugin {
     );
     view.attach(controller);
     this.controllers.push(controller);
+    this.views.push(view);
     return uuid;
   }
 }

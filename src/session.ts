@@ -1,4 +1,5 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { dirname } from 'node:path';
 
 export interface Session {
@@ -71,7 +72,8 @@ export class FileStore<T> {
 
   save(value: T): void {
     mkdirSync(dirname(this.path), { recursive: true, mode: 0o700 });
-    const tmp = `${this.path}.tmp`;
+    // Per-process name: the plugin and the settings UI server both write the session file.
+    const tmp = `${this.path}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
     writeFileSync(tmp, JSON.stringify(value), { mode: 0o600 });
     chmodSync(tmp, 0o600);
     renameSync(tmp, this.path);

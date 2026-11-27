@@ -1,6 +1,9 @@
 import { isObject, str } from './json';
 import { validatedPayload } from './jwt';
 import { newDeviceId, type Session } from './session';
+
+/** A stalled sign-in server must not hold every poll and command behind one hung request. */
+export const AUTH_TIMEOUT_MS = 30_000;
 import {
   ACCESS_TOKEN_URL,
   AUTHENTICATE_URL,
@@ -194,6 +197,7 @@ export class ToyotaAuth {
       }
 
       const response = await this.fetchFn(AUTHENTICATE_URL, {
+        signal: AbortSignal.timeout(AUTH_TIMEOUT_MS),
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Accept-API-Version': 'resource=2.1, protocol=1.0' },
         body: JSON.stringify(payload),
@@ -240,6 +244,7 @@ export class ToyotaAuth {
       code_challenge_method: 'plain',
     }).toString();
     const response = await this.fetchFn(url, {
+      signal: AbortSignal.timeout(AUTH_TIMEOUT_MS),
       method: 'GET',
       redirect: 'manual',
       headers: { Cookie: `iPlanetDirectoryPro=${tokenId}`, 'Accept-API-Version': 'resource=2.1, protocol=1.0' },
@@ -270,6 +275,7 @@ export class ToyotaAuth {
 
   private async postToken(values: Record<string, string>): Promise<TokenResponse> {
     const response = await this.fetchFn(ACCESS_TOKEN_URL, {
+      signal: AbortSignal.timeout(AUTH_TIMEOUT_MS),
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: formBody(values),

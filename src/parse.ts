@@ -31,7 +31,8 @@ const CONTAINER_KEYS = ['payload', 'vehicles', 'vehicleList', 'vehicleSummary', 
 function vehicleVin(record: unknown): string | undefined {
   for (const key of ['vin', 'VIN', 'vehicleVin', 'vehicleVIN']) {
     const vin = str(at(record, key));
-    if (vin) {
+    // A VIN is 17 letters and digits; anything else is not trusted, since the VIN also names files on disk.
+    if (vin && /^[A-Za-z0-9]{17}$/.test(vin)) {
       return vin;
     }
   }

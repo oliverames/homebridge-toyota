@@ -1,6 +1,6 @@
 import { AuthHttpError, type FetchFn, type ToyotaAuth } from './auth';
 import type { ToyotaConfig } from './config';
-import { type Envelope, findRejection, parseEnvelope } from './envelope';
+import { type Envelope, findRejection, parseEnvelope, parseJson } from './envelope';
 import { isObject, str } from './json';
 import type { Generation } from './parse';
 import { redact } from './redact';
@@ -449,7 +449,7 @@ export class ToyotaClient {
       if (!response.ok) {
         throw new ApiHttpError(response.status, text);
       }
-      const parsed: unknown = JSON.parse(text);
+      const parsed = parseJson(text);
       const errors = typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>)['errors'] : undefined;
       if (Array.isArray(errors) && errors.length > 0) {
         const first = errors[0] as Record<string, unknown> | undefined;

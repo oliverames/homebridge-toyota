@@ -200,3 +200,57 @@ describe('freshness and the hatch lock', () => {
     await vi.waitFor(() => expect(hatch()!.getCharacteristic(api.hap.Characteristic.LockCurrentState).value).toBe(0));
   });
 });
+
+describe('names, metadata and availability', () => {
+  function make() {
+    const api = new HomebridgeAPI() as unknown as API;
+    const accessory = new api.platformAccessory('Odysseus', api.hap.uuid.generate('names'));
+    const car = { ...vehicle, displayName: 'Odysseus' };
+    const view = new VehicleAccessory(api, log, accessory, car, { exposeOpenings: true, exposeBattery: true, remoteStart: true });
+    return { api, accessory, view, car };
+  }
+  const configured = (api: API, s: { getCharacteristic: (c: never) => { value: unknown } }) =>
+    s.getCharacteristic(api.hap.Characteristic.ConfiguredName as never).value;
+
+  it('prefixes every name with the vehicle name, for Siri and to avoid clashing with house sensors', () => {
+    const { api, accessory, view } = make();
+    const { Service: S } = api.hap;
+    view.stateChanged({ status: status(true), electric: { batteryPercent: 50 } });
+    const doors = accessory.services.find((s) => s.UUID === S.LockMechanism.UUID && !s.subtype)!;
+    expect(configured(api, doors)).toBe('Odysseus Doors');
+    expect(doors.isPrimaryService).toBe(true);
+    expect(configured(api, accessory.getServiceById(S.Switch, 'remote-start')!)).toBe('Odysseus Remote Start');
+    expect(configured(api, accessory.getServiceById(S.ContactSensor, 'door:driver-side-door')!)).toBe('Odysseus Driver Side Door');
+    expect(configured(api, accessory.getService(S.Battery)!)).toBe('Odysseus EV Battery');
+    expect(accessory.getService(S.AccessoryInformation)!.getCharacteristic(api.hap.Characteristic.FirmwareRevision).value).toMatch(/^\d+\.\d+\.\d+/);
+  });
+
+  it('never overwrites a name set in the Home app', () => {
+    const { api, accessory, car } = make();
+    const { Service: S, Characteristic: C } = api.hap;
+    const doors = accessory.services.find((s) => s.UUID === S.LockMechanism.UUID && !s.subtype)!;
+    doors.setCharacteristic(C.ConfiguredName, 'Car Locks');
+    new VehicleAccessory(api, log, accessory, car, { exposeOpenings: true, exposeBattery: true, remoteStart: true });
+    expect(configured(api, doors)).toBe('Car Locks');
+  });
+
+  it('answers No Response while Toyota sign-in needs attention, and recovers', async () => {
+    const { api, accessory, view } = make();
+    const doors = accessory.services.find((s) => s.UUID === api.hap.Service.LockMechanism.UUID && !s.subtype)!;
+    const current = doors.getCharacteristic(api.hap.Characteristic.LockCurrentState);
+    view.setUnavailable(true);
+    await expect(current.handleGetRequest()).rejects.toBeDefined();
+    view.setUnavailable(false);
+    await expect(current.handleGetRequest()).resolves.toBeDefined();
+  });
+
+  it('flags contact sensors whose report is too old to trust', () => {
+    const { api, accessory, view } = make();
+    const { Service: S, Characteristic: C } = api.hap;
+    view.stateChanged({ status: { ...status(true), reportedAtMs: Date.now() - STALE_DISPLAY_MS - 60_000 } });
+    const door = accessory.getServiceById(S.ContactSensor, 'door:driver-side-door')!;
+    expect(door.getCharacteristic(C.StatusFault).value).toBe(C.StatusFault.GENERAL_FAULT);
+    view.stateChanged({ status: { ...status(true), reportedAtMs: Date.now() } });
+    expect(door.getCharacteristic(C.StatusFault).value).toBe(C.StatusFault.NO_FAULT);
+  });
+});

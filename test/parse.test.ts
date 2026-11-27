@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseEnvelope } from '../src/envelope';
+import { parseEnvelope, parseJson } from '../src/envelope';
 import {
   enabledCapabilityNames,
   parseClimateRunning,
@@ -23,6 +23,9 @@ describe('vehicle list', () => {
     expect(vehicles.map((v) => v.vin)).toEqual(['TESTVIN0000000001', 'TESTVIN0000000002']);
     expect(vehicles[0]?.displayName).toBe('2026 bZ Woodland');
     expect(vehicles[1]?.displayName).toBe('Daily');
+  });
+  it('ignores a VIN that is not 17 letters and digits, since VINs also name files on disk', () => {
+    expect(parseVehicleList({ payload: [{ vin: '../../etc/passwd1' }, { vin: 'JTMBGAHB5TY600213' }] }).map((v) => v.vin)).toEqual(['JTMBGAHB5TY600213']);
   });
   it('reads generation, capabilities and subscriptions', () => {
     expect(vehicles[0]?.generation).toBe('21MM');
@@ -81,6 +84,10 @@ describe('remote status', () => {
     expect(parseTelemetry({ vehicleSpeed: '12.5' }, now)).toEqual({ speed: 12.5 });
     expect(parseTelemetry({ payload: { speed: -1 } }, now)).toEqual({});
     expect(parseTelemetry(null, now)).toEqual({});
+  });
+  it('a non-JSON body becomes a fixed message that does not quote the body', () => {
+    expect(() => parseJson('<html>secret-ish page</html>')).toThrow('not JSON (28 bytes)');
+    expect(() => parseEnvelope('<html>secret-ish page</html>')).not.toThrow(/secret/);
   });
   it('reads epoch report times and rejects implausible ones', () => {
     const now = Date.parse('2026-11-27T20:00:00Z');

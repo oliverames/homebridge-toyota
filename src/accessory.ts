@@ -1,4 +1,5 @@
 import type { API, Characteristic, CharacteristicValue, Logging, PlatformAccessory, Service } from 'homebridge';
+import { PLUGIN_VERSION } from './settings';
 import type { VehicleCommand } from './api';
 import type { ControllerListener, VehicleController, VehicleState } from './controller';
 import type { RemoteStatus, VehicleSummary } from './parse';
@@ -42,6 +43,9 @@ export class VehicleAccessory implements ControllerListener {
   private reportedHatch = LOCK_UNKNOWN;
   private openingsLogged = false;
   private readonly now: () => number;
+  /** Toyota sign-in needs attention: HomeKit shows No Response instead of stale values. */
+  private unavailable = false;
+  private readonly prefix: string;
 
   constructor(
     private readonly api: API,
@@ -53,18 +57,23 @@ export class VehicleAccessory implements ControllerListener {
     this.Service = api.hap.Service;
     this.Characteristic = api.hap.Characteristic;
     this.now = options.now ?? Date.now;
+    this.prefix = (vehicle.nickname || accessory.displayName || vehicle.displayName).trim();
     const { Service: S, Characteristic: C } = this;
 
     accessory.getService(S.AccessoryInformation)!
       .setCharacteristic(C.Manufacturer, 'Toyota')
       .setCharacteristic(C.Model, [vehicle.modelYear, vehicle.modelName].filter(Boolean).join(' ') || 'Vehicle')
-      .setCharacteristic(C.SerialNumber, vehicle.vin);
+      .setCharacteristic(C.SerialNumber, vehicle.vin)
+      .setCharacteristic(C.FirmwareRevision, PLUGIN_VERSION);
 
     // Doors: the one native service every Toyota with remote lock maps to.
     this.lock =
       accessory.services.find((s) => s.UUID === S.LockMechanism.UUID && !s.subtype) ?? accessory.addService(S.LockMechanism, 'Doors');
-    this.lock.setCharacteristic(C.Name, 'Doors');
+    this.name(this.lock, 'Doors');
+    // The Home app tile and Siri answers follow the primary service.
+    this.lock.setPrimaryService(true);
     this.lock.getCharacteristic(C.LockCurrentState).onGet(() => {
+      this.ensureAvailable();
       // The Home app reading the lock means someone is looking at the car.
       this.controller?.noteInterest();
       return this.reportedLock;
@@ -72,7 +81,10 @@ export class VehicleAccessory implements ControllerListener {
     this.lock
       .getCharacteristic(C.LockTargetState)
       .onGet(() => (this.reportedLock === LOCK_UNSECURED ? LOCK_UNSECURED : LOCK_SECURED))
-      .onSet((value) => this.setLockTarget(value));
+      .onSet((value) => {
+        this.ensureAvailable();
+        this.setLockTarget(value);
+      });
     this.lock.updateCharacteristic(C.LockCurrentState, this.reportedLock);
 
     this.configureRemoteStart();
@@ -94,6 +106,39 @@ export class VehicleAccessory implements ControllerListener {
     this.controller = controller;
   }
 
+  /**
+   * Sets the name Siri and the Home app use. Name changes every start, but
+   * ConfiguredName is written only while it is empty, so a rename in the Home
+   * app is never overwritten. Names carry the vehicle's name, so "Window" or
+   * "Door" never collides with the house's own sensors.
+   */
+  private name(service: Service, label: string): void {
+    const { Characteristic: C } = this;
+    const full = this.prefix && !label.toLowerCase().startsWith(this.prefix.toLowerCase()) ? `${this.prefix} ${label}` : label;
+    service.setCharacteristic(C.Name, full);
+    if (!service.testCharacteristic(C.ConfiguredName)) {
+      service.addOptionalCharacteristic(C.ConfiguredName);
+    }
+    const current = service.getCharacteristic(C.ConfiguredName).value;
+    if (typeof current !== 'string' || current.trim() === '') {
+      service.setCharacteristic(C.ConfiguredName, full);
+    }
+  }
+
+  /** While Toyota sign-in needs attention, reads and writes answer No Response. */
+  setUnavailable(unavailable: boolean): void {
+    if (unavailable !== this.unavailable) {
+      this.log.info(unavailable ? 'HomeKit shows the vehicle as not responding until you sign in to Toyota again.' : 'HomeKit shows the vehicle again.');
+    }
+    this.unavailable = unavailable;
+  }
+
+  private ensureAvailable(): void {
+    if (this.unavailable) {
+      throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+    }
+  }
+
   private removeAll(uuid: string): void {
     for (const service of this.accessory.services.filter((s) => s.UUID === uuid)) {
       this.accessory.removeService(service);
@@ -110,11 +155,15 @@ export class VehicleAccessory implements ControllerListener {
       return;
     }
     this.remoteSwitch = existing ?? this.accessory.addService(S.Switch, 'Remote Start', REMOTE_START_SUBTYPE);
-    this.remoteSwitch.setCharacteristic(C.Name, 'Remote Start');
+    this.name(this.remoteSwitch, 'Remote Start');
     this.remoteSwitch
       .getCharacteristic(C.On)
-      .onGet(() => this.reportedRunning)
+      .onGet(() => {
+        this.ensureAvailable();
+        return this.reportedRunning;
+      })
       .onSet((value) => {
+        this.ensureAvailable();
         this.dispatch(value === true ? 'remoteStart' : 'remoteStop');
       });
   }
@@ -122,12 +171,18 @@ export class VehicleAccessory implements ControllerListener {
   private configureHatch(service: Service): void {
     const { Characteristic: C } = this;
     this.hatch = service;
-    service.setCharacteristic(C.Name, 'Hatch');
-    service.getCharacteristic(C.LockCurrentState).onGet(() => this.reportedHatch);
+    this.name(service, 'Hatch');
+    service.getCharacteristic(C.LockCurrentState).onGet(() => {
+      this.ensureAvailable();
+      return this.reportedHatch;
+    });
     service
       .getCharacteristic(C.LockTargetState)
       .onGet(() => (this.reportedHatch === LOCK_UNSECURED ? LOCK_UNSECURED : LOCK_SECURED))
-      .onSet((value) => this.dispatch(value === C.LockTargetState.SECURED ? 'lockTrunk' : 'unlockTrunk'));
+      .onSet((value) => {
+        this.ensureAvailable();
+        this.dispatch(value === C.LockTargetState.SECURED ? 'lockTrunk' : 'unlockTrunk');
+      });
   }
 
   private setLockTarget(value: CharacteristicValue): void {
@@ -214,8 +269,10 @@ export class VehicleAccessory implements ControllerListener {
           const service =
             this.accessory.getServiceById(S.ContactSensor, opening.key) ??
             this.accessory.addService(S.ContactSensor, opening.label, opening.key);
-          service.setCharacteristic(C.Name, opening.label);
+          this.name(service, opening.label);
           service.updateCharacteristic(C.ContactSensorState, value);
+          // A position from a report too old to trust is flagged, not presented as current.
+          service.updateCharacteristic(C.StatusFault, tooOld ? C.StatusFault.GENERAL_FAULT : C.StatusFault.NO_FAULT);
         }
       }
     }
@@ -224,7 +281,7 @@ export class VehicleAccessory implements ControllerListener {
       const battery = batteryState(state.electric);
       if (battery) {
         const service = this.accessory.getService(S.Battery) ?? this.accessory.addService(S.Battery, 'EV Battery');
-        service.setCharacteristic(C.Name, 'EV Battery');
+        this.name(service, 'EV Battery');
         service.updateCharacteristic(C.BatteryLevel, battery.level);
         service.updateCharacteristic(C.StatusLowBattery, battery.lowBattery ? 1 : 0);
         service.updateCharacteristic(C.ChargingState, battery.chargingState);
