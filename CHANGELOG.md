@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.9 - 2026-11-27
+
+- Auto-lock reads the engine and climate state itself when Remote Start is off, and does not lock when that state is unknown. 0.3.8 treated an unknown state as not running.
+- Auto-lock re-checks after each wait and stops if a command started or an unlock from HomeKit began a new episode, so it cannot lock right after you unlock.
+
 ## 0.3.8 - 2026-11-27
 
 - Auto-lock (opt-in, `autoLock.enabled`). Locks the doors once they have been reported unlocked for `autoLock.afterMinutes` (default 10) with the car parked: fresh zero-speed telemetry, every door, the hatch and the hood closed, engine and climate off. RedLink's limits apply: 15 minutes of grace after an unlock from HomeKit, 10 minutes between attempts, 3 attempts per unlock. It may ask the car for a fresh report up to 3 times per unlock, at least 15 minutes apart. The car refuses on its own while a key is inside.

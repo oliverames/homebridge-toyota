@@ -416,6 +416,28 @@ describe('auto-lock through the controller', () => {
     expect(unknown.api.sent).toEqual([]);
   });
 
+  it('an unlock from HomeKit during the telemetry read stops the attempt and keeps its grace', async () => {
+    const t = car([doors(false, MIN)], { speed: 0, reportedAtMs: NOW });
+    (t.controller as unknown as { autoLockState: object }).autoLockState = { attempts: 0, evidenceWakes: 0, unlockedSince: NOW - 30 * MIN };
+    let unlocking: Promise<void> | undefined;
+    t.api.readTelemetry = async () => {
+      unlocking = t.controller.command('unlock');
+      return { speed: 0, reportedAtMs: NOW };
+    };
+    await t.controller.poll();
+    await unlocking;
+    expect(t.api.sent).toEqual(['unlock']);
+    expect(t.saved()).toMatchObject({ lastUserUnlock: NOW, attempts: 0 });
+  });
+
+  it('reads the engine state itself when Remote Start is off, and fails closed without it', async () => {
+    const t = car([doors(false, MIN)], { speed: 0, reportedAtMs: NOW });
+    (t.controller as unknown as { autoLockState: object }).autoLockState = { attempts: 0, evidenceWakes: 0, unlockedSince: NOW - 30 * MIN };
+    t.api.running = [undefined];
+    await t.controller.poll();
+    expect(t.api.sent).toEqual([]);
+  });
+
   it('an unlock from HomeKit holds auto-lock off', async () => {
     const t = car([doors(false, MIN)], { speed: 0, reportedAtMs: NOW });
     await t.controller.command('unlock');

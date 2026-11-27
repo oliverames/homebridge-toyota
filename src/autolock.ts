@@ -108,6 +108,10 @@ export function decideAutoLock(state: AutoLockState, input: AutoLockInput): Auto
   if (running === true) {
     return { action: 'none', reason: 'the engine or climate is running' };
   }
+  // Unattended, so an unknown engine state fails closed, like an unknown speed.
+  if (running === undefined) {
+    return { action: 'none', reason: 'the engine state is unknown' };
+  }
   if (!fresh(status.reportedAtMs, now) || !fresh(telemetry?.reportedAtMs, now)) {
     if (state.evidenceWakes >= AUTO_LOCK.maxEvidenceWakes) {
       return { action: 'none', reason: 'fresh-report limit reached for this unlock' };

@@ -302,6 +302,11 @@ export class VehicleController {
     }
   }
 
+  /** True when a command is running or an unlock from HomeKit replaced the episode since `state` was loaded. */
+  private superseded(state: AutoLockState): boolean {
+    return this.pending !== undefined || this.autoLockState !== state;
+  }
+
   /** One auto-lock decision after a poll. Never throws. */
   private async autoLockStep(mayWake: boolean): Promise<void> {
     const config = this.options.autoLock;
@@ -312,15 +317,27 @@ export class VehicleController {
     try {
       const state = this.loadAutoLockState();
       let telemetry;
+      let running = this.state.running;
       if (status.doorsLocked === false) {
         try {
           telemetry = await this.api.readTelemetry(this.vin, this.generation);
         } catch (error) {
           this.log.debug(`Telemetry read for auto-lock failed: ${describe(error)}`);
         }
+        if (running === undefined) {
+          try {
+            running = await this.api.readRunning(this.vin, this.generation, this.electricLike);
+          } catch (error) {
+            this.log.debug(`Engine status read for auto-lock failed: ${describe(error)}`);
+          }
+        }
+        // A command (an unlock from HomeKit) or a wake may have started while reading.
+        if (this.superseded(state)) {
+          return;
+        }
       }
       const now = this.now();
-      const decision = decideAutoLock(state, { status, telemetry, running: this.state.running, now, afterMs: config.afterMs });
+      const decision = decideAutoLock(state, { status: this.state.status ?? status, telemetry, running, now, afterMs: config.afterMs });
       this.saveAutoLockState();
       if (decision.action === 'none') {
         if (decision.reason !== this.autoLockReason && status.doorsLocked === false) {
@@ -338,8 +355,14 @@ export class VehicleController {
         state.lastEvidenceWake = now;
         this.saveAutoLockState();
         await this.wake(AUTO_LOCK.wakeIntervalMs, 'Auto-lock needs a recent report');
+        if (this.superseded(state)) {
+          return;
+        }
         // The fresh report (if any) is in; decide again without another wake.
         await this.autoLockStep(false);
+        return;
+      }
+      if (this.superseded(state)) {
         return;
       }
       state.attempts++;

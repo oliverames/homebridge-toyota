@@ -17,7 +17,7 @@ const status = (locked: boolean | null, opts: { ageMs?: number; open?: 'door' | 
 const parked = { speed: 0, reportedAtMs: NOW - MIN };
 const ready = (): AutoLockState => ({ ...emptyAutoLockState(), unlockedSince: NOW - 30 * MIN });
 const decide = (state: AutoLockState, s: RemoteStatus, extra: Partial<Parameters<typeof decideAutoLock>[1]> = {}) =>
-  decideAutoLock(state, { status: s, telemetry: parked, now: NOW, afterMs: 10 * MIN, ...extra });
+  decideAutoLock(state, { status: s, telemetry: parked, running: false, now: NOW, afterMs: 10 * MIN, ...extra });
 
 describe('auto-lock policy', () => {
   it('locks an unlocked, parked, closed, idle car with fresh evidence', () => {
@@ -59,5 +59,6 @@ describe('auto-lock policy', () => {
     expect(decide(ready(), status(false), { telemetry: { reportedAtMs: NOW } }).action).toBe('none');
     expect(decide(ready(), status(false), { telemetry: { speed: 5, reportedAtMs: NOW } }).action).toBe('none');
     expect(decide(ready(), status(null)).action).toBe('none');
+    expect(decide(ready(), status(false), { running: undefined })).toMatchObject({ action: 'none', reason: 'the engine state is unknown' });
   });
 });
