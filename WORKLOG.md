@@ -6,7 +6,7 @@
 
 **Verified**: 153 tests, lint, typecheck and build pass locally; the refresh request is pinned against RedLink's `ToyotaRequestFactory`. Released as v0.3.6. 0.3.5 is running on home-server (0.3.4 backup in `~/.homebridge/backups/`).
 
-**Left off at**: v0.3.6 is NOT deployed; the install was held for Oliver's go-ahead because it adds car wakes. Not yet verified live: that the bZ accepts `refresh-status` and how long its fresh report takes to appear.
+**Left off at**: v0.3.6 deployed to home-server at 16:59 with Oliver's go-ahead (0.3.5 backed up). Verified live: the first poll found a 5.1 hour old report, `refresh-status` was accepted, and the bZ's fresh report (21:59:29Z) arrived within 21 seconds; it still reported the doors unlocked. Next options (Home-app wake, faster polling after activity, hatch lock, engine timer, AppSync push) are with Oliver.
 
 ---
 
