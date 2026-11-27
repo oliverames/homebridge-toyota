@@ -1,5 +1,17 @@
 # Worklog
 
+## 2026-11-27 - 0.4.2 logging; config was never reaching the plugin
+
+**What changed**: 0.4.2 adds logging across sign-in, every request (status, duration, network failure kind), token refreshes with remaining lifetime, a per-update summary, HomeKit requests, opening, charging and engine changes, command confirmation times and scheduler decisions, plus a `debug` setting that shows debug lines at info marked `[debug]`. `test/logging.test.ts` checks a refresh, reads, a command and a refused request for leaked secrets. Deploying it exposed that child-bridge restarts reuse the parent homebridge process's config from 11/14, so `autoLock` (since 0.4.0) and `debug` had never been active. With Oliver's go-ahead the main homebridge process was restarted at 18:36.
+
+Homebridge-wide scan: nearly all UniFi Protect, Nest, Emporia and PlayStation errors fall in a 3:07-4:00 AM window (10/17, 10/24, 10/29, 11/4, 11/25, 11/27), the UDM Pro's nightly maintenance: DNS (`ENOTFOUND`) and the Protect controller drop for minutes, and every plugin recovers. homebridge-playstation was never paired (`~/.config/playactor/credentials.json` missing), so HomeKit power commands fail with "Unable to request credentials"; pairing needs Oliver's PSN sign-in and the console PIN (`homebridge-playstation-login`). Sonos lines are from a plugin removed 11/14. No Homebridge core warnings.
+
+**Verified**: 194 tests, lint, typecheck and build pass locally. Live after the restart: main process and all 7 child bridges running, UI 200, Toyota summary "auto-lock after 10 min ... debug logging on", debug request lines at 137-276 ms, poll summary "doors locked, report 46 minutes old; EV battery 7%, charging; engine off".
+
+**Left off at**: Check with Oliver whether 7% charge is real (HomeKit cached 73% on 11/17). PS5 pairing waits on Oliver. The UDM 3 AM window is a separate network task.
+
+---
+
 ## 2026-11-27 - 0.4.1, host hardening, deploys caught up
 
 **What changed**: SSH returned. Deployed 0.4.0 with `autoLock: {enabled: true, afterMinutes: 10}` (config backed up to `~/.homebridge/backups/config-2026-11-27-before-autolock.json`), then 0.4.1. Login history since 11/14: one emailed code (initial setup), no refresh-token rejections. Tokens: access 30 min, refresh 90 days renewed on every refresh. The one defect was the 11/25 "403: jwt expired" poll failure under the forced-refresh cooldown; 0.4.1 always refreshes on an explicit expiry, shows the sign-in lifetime on the settings page, and ignores Home hub reads for two minutes after a start (a hub reconnect read spent a wake on 11/27). Host: `~/.homebridge` was world-readable (config.json with every plugin secret, the UI TLS private key, emporia-tokens.json, HAP pairing keys in persist/); with Oliver's go-ahead it is now 700 with secret files 600 (old modes in `~/homebridge-perms-before-2026-11-27.txt`). The UI terminal is already off; the UI has one user without 2FA. Third-party crashes seen: homebridge-nest 4.6.10 (`RangeError: Could not decode varint` in nest-connection.js:647, 11/15 x2, 11/16) and homebridge-lgwebos-tv (WebSocket CLOSING, 11/10); Homebridge restarted both after 10 s.
