@@ -1,5 +1,15 @@
 # Worklog
 
+## 2026-11-27 - 0.3.7: Home app wakes, fast follow-up, hatch lock, stale display
+
+**What changed**: Oliver asked for more frequent updates and better state, and chose all four options. 0.3.7 wakes the car when the Home app reads the Doors lock and the report is 15+ minutes old (capped at eight a day), polls every minute for 10 minutes after any command, wake or running engine, adds a Hatch lock once the car reports a hatch lock value (`trunk-lock`/`trunk-unlock`), shows locks as Unknown when the report is over 12 hours old, and logs every opening once per start.
+
+**Verified**: 161 tests, lint, typecheck and build pass locally. Released as v0.3.7. AppSync push research is in the session scratchpad: RedLink's 21MM subscription got acks but no event (redlink-lite docs/refresh-behavior-review-2026-09-08.md), and the corrected probe `Scripts/toyota-feed-observe.py` has never run on a device.
+
+**Left off at**: v0.3.7 is NOT deployed; home-server runs 0.3.6 (verified live: fresh report in 21 s). The install was held for Oliver's go-ahead. After deploying, check the "The vehicle reports:" line for whether the bZ sends a hatch lock value. Next for push: an observe-only probe inside the plugin process, behind a flag, off by default.
+
+---
+
 ## 2026-11-27 - 0.3.6: refresh stale reports
 
 **What changed**: 0.3.5 went live on home-server at 15:09 and its first line showed Toyota serving a report 3 hours 14 minutes old (16:54:58Z, unlocked). RedLink has woken the car for stale reports since 2026-11-15 at Oliver's request, so 0.3.6 ports `wakesForStaleReport`: `refresh-status` when the report is `staleReportHours` old (default and minimum 3, 0 off) and no wake in that time, the wake time saved per VIN, then about two minutes of reads for the newer report.
