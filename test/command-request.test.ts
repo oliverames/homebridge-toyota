@@ -180,3 +180,15 @@ describe('refresh-status request (pinned against RedLink ToyotaRequestFactory .r
     expect(net.calls).toHaveLength(1);
   });
 });
+
+describe('telemetry request (pinned against RedLink ToyotaRequestFactory .telemetry)', () => {
+  it('reads v3/telemetry with a GENERATION header, v2 on 17CY', async () => {
+    const { api, net } = build(() => new Response('{"status":"SUCCESS","payload":{"speed":{"value":0},"lastTimestamp":"2026-11-27T21:58:00Z"}}', { status: 200 }));
+    const t = await api.readTelemetry(VIN, '21MM');
+    expect(net.calls[0]!.url).toMatch(/\/v3\/telemetry$/);
+    expect(new Headers(net.calls[0]!.init?.headers).get('generation')).toBe('21MM');
+    expect(t.speed).toBe(0);
+    await api.readTelemetry(VIN, '17CY');
+    expect(net.calls[1]!.url).toMatch(/\/v2\/telemetry$/);
+  });
+});

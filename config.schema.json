@@ -71,6 +71,25 @@
         "minimum": 0,
         "maximum": 48
       },
+      "autoLock": {
+        "title": "Auto-lock",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "title": "Lock the doors when the car is left unlocked",
+            "description": "Locks once the doors have been reported unlocked for the time below with the car parked (fresh zero-speed telemetry), every door, the hatch and the hood closed, and the engine and climate off. Waits 15 minutes after an unlock from HomeKit, tries at most 3 times per unlock, and may wake the car up to 3 times per unlock for a fresh report. The car itself refuses while a key is inside.",
+            "type": "boolean",
+            "default": false
+          },
+          "afterMinutes": {
+            "title": "Minutes unlocked before auto-lock",
+            "type": "number",
+            "default": 10,
+            "minimum": 1,
+            "maximum": 1440
+          }
+        }
+      },
       "exposeOpenings": {
         "title": "Door, window, trunk and hood contact sensors",
         "description": "One native contact sensor per opening the vehicle reports.",
@@ -123,7 +142,7 @@
     {
       "type": "fieldset",
       "title": "Features",
-      "items": ["exposeOpenings", "exposeBattery", "remoteStart.enabled", "remoteStart.prepare"]
+      "items": ["exposeOpenings", "exposeBattery", "remoteStart.enabled", "remoteStart.prepare", "autoLock.enabled", "autoLock.afterMinutes"]
     },
     {
       "type": "fieldset",

@@ -28,6 +28,10 @@ describe('parseConfig', () => {
     expect(parseConfig({ ...base, staleReportHours: 6 }).config?.staleReportHours).toBe(6);
     expect(parseConfig(base).config?.wakeOnHomeAppOpen).toBe(true);
     expect(parseConfig({ ...base, wakeOnHomeAppOpen: false }).config?.wakeOnHomeAppOpen).toBe(false);
+    expect(parseConfig(base).config?.autoLockMinutes).toBeUndefined();
+    expect(parseConfig({ ...base, autoLock: { enabled: true } }).config?.autoLockMinutes).toBe(10);
+    expect(parseConfig({ ...base, autoLock: { enabled: true, afterMinutes: 5 } }).config?.autoLockMinutes).toBe(5);
+    expect(parseConfig({ ...base, autoLock: { enabled: false, afterMinutes: 5 } }).config?.autoLockMinutes).toBeUndefined();
   });
   it('remote start is opt-in', () => {
     expect(parseConfig({ ...base, remoteStart: { enabled: true } }).config?.remoteStartEnabled).toBe(true);

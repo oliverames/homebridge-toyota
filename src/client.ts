@@ -163,6 +163,10 @@ export const routes = {
     path: g === '17CY' ? 'v1/legacy/remote/engine-status' : 'v1/global/remote/engine-status',
   }),
   climateStatus: (): Route => ({ method: 'GET', path: 'v1/global/remote/climate-status' }),
+  telemetry: (g: Generation): Route =>
+    g === '17CY'
+      ? { method: 'GET', path: 'v2/telemetry', extraHeaders: { GENERATION: '17CY' } }
+      : { method: 'GET', path: 'v3/telemetry', extraHeaders: { GENERATION: g } },
   electricStatus: (version: 'v3' | 'v2' = 'v3'): Route => ({ method: 'GET', path: `${version}/electric/status` }),
   /** Lock/unlock/engine-start/engine-stop on every generation except 24MM (GraphQL). */
   remoteCommand: (command: RemoteCommand, g: Generation, session: Session, vin: string): Route => {

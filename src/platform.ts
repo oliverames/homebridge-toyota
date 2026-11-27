@@ -6,6 +6,7 @@ import { type ChallengeStore, type PendingChallenge, ToyotaAuth } from './auth';
 import { ToyotaClient } from './client';
 import { parseConfig, type ToyotaConfig } from './config';
 import { describe, VehicleController, type WakeStore } from './controller';
+import { type AutoLockStore, isAutoLockState } from './autolock';
 import { type Generation, prepareCapabilities, type VehicleSummary } from './parse';
 import { FAST_POLL_WINDOW_MS, Poller, type PollOutcome } from './poller';
 import { FileStore, isSession, type Session } from './session';
@@ -141,6 +142,11 @@ export class ToyotaPlatform implements DynamicPlatformPlugin {
     return { load: () => file.load()?.wokeAt, save: (wokeAt) => file.save({ wokeAt }) };
   }
 
+  private autoLockStore(vin: string): AutoLockStore {
+    const file = new FileStore(join(this.api.user.storagePath(), 'homebridge-toyota', `autolock-${vin}.json`), isAutoLockState);
+    return { load: () => file.load(), save: (state) => file.save(state) };
+  }
+
   private stopSessionWatch(): void {
     if (this.sessionWatch) {
       clearInterval(this.sessionWatch);
@@ -231,6 +237,7 @@ export class ToyotaPlatform implements DynamicPlatformPlugin {
         wakeStore: this.wakeStore(vehicle.vin),
         interestWakeMs: config.wakeOnHomeAppOpen ? INTEREST_WAKE_MS : 0,
         onActivity: () => this.poller?.hurry(Date.now() + FAST_POLL_WINDOW_MS),
+        autoLock: config.autoLockMinutes === undefined ? undefined : { afterMs: config.autoLockMinutes * 60_000, store: this.autoLockStore(vehicle.vin) },
       },
       view,
       this.log,

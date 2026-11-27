@@ -13,9 +13,11 @@ import {
   parseElectricStatus,
   parseEngineRunning,
   parseRemoteStatus,
+  parseTelemetry,
   parseVehicleList,
   recognizesVehicleList,
   type RemoteStatus,
+  type Telemetry,
   type VehicleSummary,
 } from './parse';
 import type { PollOutcome } from './poller';
@@ -34,6 +36,8 @@ export interface VehicleApi {
   sendCommand(command: VehicleCommand, vin: string, generation: Generation, electric: boolean): Promise<void>;
   /** Asks the vehicle to upload a fresh status report. Wakes the car; callers ration it. */
   requestRefresh(vin: string, generation: Generation): Promise<void>;
+  /** Speed and its report time, used to tell that the vehicle is parked. */
+  readTelemetry(vin: string, generation: Generation): Promise<Telemetry>;
 }
 
 export class ToyotaVehicleApi implements VehicleApi {
@@ -89,6 +93,10 @@ export class ToyotaVehicleApi implements VehicleApi {
       }
     }
     return parseEngineRunning((await this.client.send(() => routes.engineStatus(generation), vin, generation)).data);
+  }
+
+  async readTelemetry(vin: string, generation: Generation): Promise<Telemetry> {
+    return parseTelemetry((await this.client.send(() => routes.telemetry(generation), vin, generation)).data);
   }
 
   async requestRefresh(vin: string, generation: Generation): Promise<void> {

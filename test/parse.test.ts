@@ -7,6 +7,7 @@ import {
   parseEngineRunning,
   parseRemoteStatus,
   reportTime,
+  parseTelemetry,
   hasRemoteCapability,
   parseVehicleList,
   prepareCapabilities,
@@ -73,6 +74,13 @@ describe('remote status', () => {
     expect(status({ payload: { occurrenceDate: '2026-11-26T22:55:20Z', vehicleStatus: doors } }).reportedAt).toBe('2026-11-26T22:55:20Z');
     expect(status({ payload: { occurrenceDate: '2026-11-26T22:55:20Z', vehicleStatus: doors } }).reportedAtMs).toBe(Date.parse('2026-11-26T22:55:20Z'));
     expect(status({ vehicleStatus: doors }).reportedAt).toBeUndefined();
+  });
+  it('reads telemetry speed with its report time, from the paths RedLink reads', () => {
+    const now = Date.parse('2026-11-27T22:00:00Z');
+    expect(parseTelemetry({ payload: { speed: { value: 0, unit: 'mph' }, lastTimestamp: '2026-11-27T21:58:00Z' } }, now)).toEqual({ speed: 0, reportedAt: '2026-11-27T21:58:00Z', reportedAtMs: Date.parse('2026-11-27T21:58:00Z') });
+    expect(parseTelemetry({ vehicleSpeed: '12.5' }, now)).toEqual({ speed: 12.5 });
+    expect(parseTelemetry({ payload: { speed: -1 } }, now)).toEqual({});
+    expect(parseTelemetry(null, now)).toEqual({});
   });
   it('reads epoch report times and rejects implausible ones', () => {
     const now = Date.parse('2026-11-27T20:00:00Z');

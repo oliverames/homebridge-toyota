@@ -456,6 +456,39 @@ export function parseElectricStatus(data: unknown): ElectricStatus {
 /* Engine / climate                                                           */
 /* -------------------------------------------------------------------------- */
 
+export interface Telemetry {
+  /** Vehicle speed as Toyota reports it; 0 means stopped. Undefined when not reported. */
+  speed?: number;
+  reportedAt?: string;
+  reportedAtMs?: number;
+}
+
+/**
+ * Telemetry speed, RedLink's `observedSpeed` paths (`speed.value`, `speed`,
+ * `vehicleSpeed.value`, `vehicleSpeed`), with the report time from `lastTimestamp`.
+ */
+export function parseTelemetry(data: unknown, now: number = Date.now()): Telemetry {
+  for (const root of [['payload'], []]) {
+    const base = at(data, ...root);
+    if (!isObject(base)) {
+      continue;
+    }
+    let speed: number | undefined;
+    for (const path of [['speed', 'value'], ['speed'], ['vehicleSpeed', 'value'], ['vehicleSpeed']]) {
+      const value = num(at(base, ...path));
+      if (value !== undefined && Number.isFinite(value) && value >= 0) {
+        speed = value;
+        break;
+      }
+    }
+    const time = reportTime(base, now);
+    if (speed !== undefined || time.reportedAt !== undefined) {
+      return { ...(speed !== undefined ? { speed } : {}), ...time };
+    }
+  }
+  return {};
+}
+
 export function parseEngineRunning(data: unknown): boolean | undefined {
   const running = bool(at(data, 'running'));
   if (running !== undefined) {

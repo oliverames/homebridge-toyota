@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.8 - 2026-11-27
+
+- Auto-lock (opt-in, `autoLock.enabled`). Locks the doors once they have been reported unlocked for `autoLock.afterMinutes` (default 10) with the car parked: fresh zero-speed telemetry, every door, the hatch and the hood closed, engine and climate off. RedLink's limits apply: 15 minutes of grace after an unlock from HomeKit, 10 minutes between attempts, 3 attempts per unlock. It may ask the car for a fresh report up to 3 times per unlock, at least 15 minutes apart. The car refuses on its own while a key is inside.
+- Telemetry (vehicle speed) is read while the doors are reported unlocked and auto-lock is on.
+- No temperature sensor or thermostat: Toyota reports no measured temperature for these vehicles, only the climate target.
+
 ## 0.3.7 - 2026-11-27
 
 - Opening the car in the Home app asks it for a fresh report when the last one is 15 minutes old or more (RedLink's app-open rule), at most eight times a day. `wakeOnHomeAppOpen: false` turns it off.

@@ -3,6 +3,7 @@ import { classifyError, type VehicleApi, type VehicleCommand } from './api';
 import type { ElectricStatus, Generation, PrepareCapabilities, RemoteStatus } from './parse';
 import type { PollOutcome } from './poller';
 import { lockCommandConfirmed } from './state';
+import { AUTO_LOCK, type AutoLockState, type AutoLockStore, decideAutoLock, emptyAutoLockState } from './autolock';
 
 export interface VehicleState {
   status?: RemoteStatus;
@@ -49,6 +50,8 @@ export interface ControllerOptions {
   interestWakeMs?: number;
   /** Something just happened (a command, a wake, the engine running): poll closely for a while. */
   onActivity?: () => void;
+  /** Lock the doors once they have been reported unlocked this long with the car parked. Unset: off. */
+  autoLock?: { afterMs: number; store?: AutoLockStore };
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
 }
@@ -88,6 +91,8 @@ export class VehicleController {
   private refreshUnsupported = false;
   private waking = false;
   private interestWakes: number[] = [];
+  private autoLockState?: AutoLockState;
+  private autoLockReason?: string;
 
   constructor(
     readonly vin: string,
@@ -163,6 +168,9 @@ export class VehicleController {
     }
     if (worst === 'ok') {
       worst = await this.refreshIfStale();
+    }
+    if (worst === 'ok') {
+      await this.autoLockStep(true);
     }
     return worst;
   }
@@ -242,7 +250,7 @@ export class VehicleController {
     }
     const age = reportedAtMs === undefined ? 'has no report time' : `is ${formatAge(now - reportedAtMs)} old`;
     const retry = formatAge(retryMs);
-    this.log.info(`${reason ? `${reason} and its` : "The vehicle's"} last report ${age}; asking it for a fresh one.`);
+    this.log.info(`${reason ? `${reason}: the` : 'The'} vehicle's last report ${age}; asking it for a fresh one.`);
     try {
       await this.api.requestRefresh(this.vin, this.generation);
     } catch (error) {
@@ -279,6 +287,72 @@ export class VehicleController {
     return 'ok';
   }
 
+  private loadAutoLockState(): AutoLockState {
+    this.autoLockState ??= this.options.autoLock?.store?.load() ?? emptyAutoLockState();
+    return this.autoLockState;
+  }
+
+  private saveAutoLockState(): void {
+    try {
+      if (this.autoLockState) {
+        this.options.autoLock?.store?.save(this.autoLockState);
+      }
+    } catch (error) {
+      this.log.debug(`Could not save auto-lock state: ${describe(error)}`);
+    }
+  }
+
+  /** One auto-lock decision after a poll. Never throws. */
+  private async autoLockStep(mayWake: boolean): Promise<void> {
+    const config = this.options.autoLock;
+    const status = this.state.status;
+    if (!config || !status || this.pending || this.waking) {
+      return;
+    }
+    try {
+      const state = this.loadAutoLockState();
+      let telemetry;
+      if (status.doorsLocked === false) {
+        try {
+          telemetry = await this.api.readTelemetry(this.vin, this.generation);
+        } catch (error) {
+          this.log.debug(`Telemetry read for auto-lock failed: ${describe(error)}`);
+        }
+      }
+      const now = this.now();
+      const decision = decideAutoLock(state, { status, telemetry, running: this.state.running, now, afterMs: config.afterMs });
+      this.saveAutoLockState();
+      if (decision.action === 'none') {
+        if (decision.reason !== this.autoLockReason && status.doorsLocked === false) {
+          this.log.debug(`Auto-lock is not locking yet: ${decision.reason}.`);
+        }
+        this.autoLockReason = decision.reason;
+        return;
+      }
+      this.autoLockReason = undefined;
+      if (decision.action === 'wake') {
+        if (!mayWake || this.refreshUnsupported) {
+          return;
+        }
+        state.evidenceWakes++;
+        state.lastEvidenceWake = now;
+        this.saveAutoLockState();
+        await this.wake(AUTO_LOCK.wakeIntervalMs, 'Auto-lock needs a recent report');
+        // The fresh report (if any) is in; decide again without another wake.
+        await this.autoLockStep(false);
+        return;
+      }
+      state.attempts++;
+      state.lastAttempt = now;
+      this.saveAutoLockState();
+      const since = state.unlockedSince === undefined ? 'a while' : formatAge(now - state.unlockedSince);
+      this.log.info(`Auto-lock: the doors have been unlocked for ${since} with the car parked and closed; locking (attempt ${state.attempts} of ${AUTO_LOCK.maxAttempts}).`);
+      await this.command('lock');
+    } catch (error) {
+      this.log.warn(`Auto-lock step failed unexpectedly: ${describe(error)}`);
+    }
+  }
+
   private activity(): void {
     try {
       this.options.onActivity?.();
@@ -303,6 +377,11 @@ export class VehicleController {
       return;
     }
     this.pending = command;
+    if (command === 'unlock' && this.options.autoLock) {
+      // A deliberate unlock starts a new episode and holds auto-lock off for a while.
+      this.autoLockState = { ...emptyAutoLockState(), lastUserUnlock: this.now() };
+      this.saveAutoLockState();
+    }
     try {
       if (command === 'remoteStart' && this.options.prepare) {
         const blocked = await this.prepareForStart(this.options.prepare);

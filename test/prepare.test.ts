@@ -42,6 +42,7 @@ class FakeCar implements VehicleApi {
   listVehicles = async () => [];
   readElectric = async (): Promise<ElectricStatus> => ({});
   requestRefresh = async (): Promise<void> => {};
+  readTelemetry = async () => ({});
   async readStatus(): Promise<RemoteStatus> {
     this.statusReads++;
     if (this.readError) throw this.readError;

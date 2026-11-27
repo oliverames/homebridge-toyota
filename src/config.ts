@@ -1,5 +1,6 @@
 import { GENERATIONS, type Generation } from './parse';
 import { DEFAULT_APP_VERSION } from './settings';
+import { DEFAULT_AUTO_LOCK_MINUTES } from './autolock';
 
 export const MIN_POLL_MINUTES = 5;
 export const DEFAULT_POLL_MINUTES = 5;
@@ -24,6 +25,8 @@ export interface ToyotaConfig {
   staleReportHours: number;
   /** Opening the vehicle in the Home app asks for a fresh report when the last one is 15+ minutes old. */
   wakeOnHomeAppOpen: boolean;
+  /** Minutes the doors must be reported unlocked, with the car parked and closed, before auto-lock locks them. Undefined: off. */
+  autoLockMinutes?: number;
   exposeOpenings: boolean;
   exposeBattery: boolean;
   remoteStartEnabled: boolean;
@@ -98,6 +101,19 @@ export function parseConfig(raw: Record<string, unknown>): ConfigResult {
     }
   }
 
+  let autoLockMinutes: number | undefined;
+  const autoLock = raw['autoLock'];
+  if (typeof autoLock === 'object' && autoLock !== null && (autoLock as Record<string, unknown>)['enabled'] === true) {
+    const rawMinutes = (autoLock as Record<string, unknown>)['afterMinutes'];
+    const n = rawMinutes === undefined ? DEFAULT_AUTO_LOCK_MINUTES : Number(rawMinutes);
+    if (!Number.isFinite(n) || n < 1) {
+      warnings.push(`"autoLock.afterMinutes" must be at least 1; using ${DEFAULT_AUTO_LOCK_MINUTES}.`);
+      autoLockMinutes = DEFAULT_AUTO_LOCK_MINUTES;
+    } else {
+      autoLockMinutes = Math.min(n, 24 * 60);
+    }
+  }
+
   const remoteStart = raw['remoteStart'];
   const remoteStartEnabled =
     typeof remoteStart === 'object' && remoteStart !== null && (remoteStart as Record<string, unknown>)['enabled'] === true;
@@ -121,6 +137,7 @@ export function parseConfig(raw: Record<string, unknown>): ConfigResult {
       pollIntervalMinutes,
       staleReportHours,
       wakeOnHomeAppOpen: raw['wakeOnHomeAppOpen'] !== false,
+      autoLockMinutes,
       exposeOpenings: raw['exposeOpenings'] !== false,
       exposeBattery: raw['exposeBattery'] !== false,
       remoteStartEnabled,

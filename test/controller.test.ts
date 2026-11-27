@@ -3,7 +3,7 @@ import type { VehicleApi, VehicleCommand } from '../src/api';
 import { OtpRequiredError } from '../src/auth';
 import { ApiHttpError, ClientKeyRejectedError } from '../src/client';
 import { type ControllerListener, VehicleController, type VehicleState } from '../src/controller';
-import type { ElectricStatus, RemoteStatus } from '../src/parse';
+import type { ElectricStatus, RemoteStatus, Telemetry } from '../src/parse';
 
 const locked: RemoteStatus = { openings: [], doorsLocked: true };
 const unlocked: RemoteStatus = { openings: [], doorsLocked: false };
@@ -39,6 +39,10 @@ class FakeApi implements VehicleApi {
   }
   refreshes = 0;
   refreshError?: Error;
+  telemetry: Telemetry = {};
+  async readTelemetry(): Promise<Telemetry> {
+    return this.telemetry;
+  }
   async requestRefresh(): Promise<void> {
     this.refreshes++;
     if (this.refreshError) throw this.refreshError;
@@ -352,5 +356,72 @@ describe('Home app wakes and activity', () => {
     const t = interest(MIN);
     await t.controller.command('lock');
     expect(t.activity()).toBe(1);
+  });
+});
+
+describe('auto-lock through the controller', () => {
+  const MIN = 60_000;
+  const NOW = Date.parse('2026-11-27T22:00:00Z');
+  const doors = (locked: boolean, ageMs: number): RemoteStatus => ({
+    doorsLocked: locked, reportedAt: 't', reportedAtMs: NOW - ageMs,
+    openings: [{ key: 'door:door', kind: 'door', label: 'Door', open: false, locked }],
+  });
+  function car(status: RemoteStatus[], telemetry: Telemetry) {
+    const api = new FakeApi();
+    api.statuses = status;
+    api.telemetry = telemetry;
+    let saved: unknown;
+    const lines: string[] = [];
+    const controller = new VehicleController(
+      'VIN', '21MM', api,
+      { remoteStart: false, exposeBattery: false, verifyDelaysMs: [0], wakeWaitDelaysMs: [0], now: () => NOW, sleep: async () => {},
+        autoLock: { afterMs: 10 * MIN, store: { load: () => undefined, save: (s) => { saved = structuredClone(s); } } } },
+      { stateChanged() {}, commandFailed() {} },
+      { info: (m) => lines.push(m), warn: (m) => lines.push(m), debug() {} },
+    );
+    return { api, controller, lines, saved: () => saved };
+  }
+
+  it('does not lock a car that was only just unlocked', async () => {
+    const t = car([doors(false, 2 * MIN), doors(false, 2 * MIN), doors(true, 0)], { speed: 0, reportedAtMs: NOW - MIN });
+    // Unlocked since 2 minutes ago is not long enough yet.
+    await t.controller.poll();
+    expect(t.api.sent).toEqual([]);
+  });
+
+  it('locks once the unlock is old enough and the evidence is fresh', async () => {
+    const t = car([doors(false, 3 * MIN), doors(true, 0)], { speed: 0, reportedAtMs: NOW - MIN });
+    // Seen unlocked since an older report earlier in the episode.
+    (t.controller as unknown as { autoLockState: object }).autoLockState = { attempts: 0, evidenceWakes: 0, unlockedSince: NOW - 30 * MIN };
+    await t.controller.poll();
+    expect(t.api.sent).toEqual(['lock']);
+    expect(t.lines.some((l) => l.startsWith('Auto-lock: the doors have been unlocked for 30 minutes'))).toBe(true);
+  });
+
+  it('wakes the car for fresh evidence when the unlocked report is old, then locks on it', async () => {
+    const t = car([doors(false, 60 * MIN), doors(false, 0), doors(true, 0)], { speed: 0, reportedAtMs: NOW });
+    await t.controller.poll();
+    expect(t.api.refreshes).toBe(1);
+    expect(t.api.sent).toEqual(['lock']);
+  });
+
+  it('never locks a moving car or one that does not report speed', async () => {
+    const moving = car([doors(false, MIN)], { speed: 12, reportedAtMs: NOW });
+    (moving.controller as unknown as { autoLockState: object }).autoLockState = { attempts: 0, evidenceWakes: 0, unlockedSince: NOW - 30 * MIN };
+    await moving.controller.poll();
+    expect(moving.api.sent).toEqual([]);
+    const unknown = car([doors(false, MIN)], { reportedAtMs: NOW });
+    (unknown.controller as unknown as { autoLockState: object }).autoLockState = { attempts: 0, evidenceWakes: 0, unlockedSince: NOW - 30 * MIN };
+    await unknown.controller.poll();
+    expect(unknown.api.sent).toEqual([]);
+  });
+
+  it('an unlock from HomeKit holds auto-lock off', async () => {
+    const t = car([doors(false, MIN)], { speed: 0, reportedAtMs: NOW });
+    await t.controller.command('unlock');
+    (t.controller as unknown as { autoLockState: { unlockedSince: number } }).autoLockState.unlockedSince = NOW - 30 * MIN;
+    t.api.sent.length = 0;
+    await t.controller.poll();
+    expect(t.api.sent).toEqual([]);
   });
 });
