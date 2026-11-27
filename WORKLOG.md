@@ -6,7 +6,7 @@
 
 **Verified**: 161 tests, lint, typecheck and build pass locally. Released as v0.3.7. AppSync push research is in the session scratchpad: RedLink's 21MM subscription got acks but no event (redlink-lite docs/refresh-behavior-review-2026-09-08.md), and the corrected probe `Scripts/toyota-feed-observe.py` has never run on a device.
 
-**Left off at**: v0.3.7 is NOT deployed; home-server runs 0.3.6 (verified live: fresh report in 21 s). The install was held for Oliver's go-ahead. After deploying, check the "The vehicle reports:" line for whether the bZ sends a hatch lock value. Next for push: an observe-only probe inside the plugin process, behind a flag, off by default.
+**Left off at**: v0.3.7 deployed to home-server at 17:08 with Oliver's go-ahead (0.3.6 backed up). Verified live: the bZ reports Door, Rear Door, Window, Hatch and Hood, with lock values for both door groups and the hatch, so the Hatch lock was created; all reported unlocked at 21:59:29Z. Not yet exercised: a Home-app wake, minute polling after a command, and a Hatch lock or unlock. Next for push: an observe-only AppSync probe inside the plugin process, behind a flag, off by default.
 
 ---
 
