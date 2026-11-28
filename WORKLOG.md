@@ -1,5 +1,15 @@
 # Worklog
 
+## 2026-11-27 - 0.5.1: auto-lock treats "car off" as parked
+
+**What changed**: At Oliver's direction ("very rare to sit in it with it off"), auto-lock's parked evidence is now the car reporting off (`engine-status`, read every poll) with the doors unlocked for `afterMinutes`. Speed above zero or a fresh position more than 50 m from where the doors were first seen unlocked still blocks it. All other guards are unchanged. `engine-status` dates the last engine event, not the read, so its date is not used for freshness.
+
+**Verified**: 215 tests, typecheck and lint pass. 0.5.0 was backed up to `~/.homebridge/backups/homebridge-toyota-0.5.0-2026-11-27`, and 0.5.1 is installed. Only the Toyota child bridge was restarted (no config change) at 20:29. The startup summary reads 0.5.1 with auto-lock after 10 min, the first poll succeeded, and the car is locked with the engine off.
+
+**Left off at**: Not yet observed live: whether `engine-status` reports a driven car as running or only tracks remote start. A false "off" while driving would at worst lock the doors or be refused by the car. There has been no unattended lock on the new evidence yet.
+
+---
+
 ## 2026-11-27 - 0.5.0: Oliver’s Car room, At Home, Jammed, auto-lock without telemetry
 
 **What changed**: In HomeKit (via iMCP on the MacBook Pro): created room "Oliver’s Car", moved the accessory out of Driveway, renamed it "Oliver’s Car" and its services (Doors, Hatch Lock, Remote Start, EV Battery, Front Doors, Rear Doors, Windows, Hood, Hatch). Probing on home-server found `v1/location` and `v3/telemetry` answer 403 for this bZ, while remote status carries `latitude`, `longitude`, `locationAcquisitionDatetime`; 0.4.x auto-lock therefore could never confirm parked. Home was set from the car's position at 2026-11-28T00:25:15Z (radius 150 m; coordinates never printed). 0.5.0: `vehicleName` with plugin-owned name tracking, clearer labels, At Home occupancy sensor, Jammed on failed lock, location-based parked evidence for auto-lock, no auth retry and 12 h parking for optional reads. Lock-screen battery: HomeKit cannot; RedLink already ships accessoryCircular/Rectangular/Inline widgets.
