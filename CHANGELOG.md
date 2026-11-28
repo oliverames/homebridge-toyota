@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.1 - 2026-11-27
+
+- Auto-lock treats the car reporting off as parked. Telemetry speed is unavailable on the 21MM bZ and a position needed two fresh reports 10 minutes apart; "off" is read every poll, and the owner noted people rarely sit in a car that is off. Speed above zero, or a position that moved since the unlock, still vetoes. Every other guard is unchanged: the unlocked time, closed doors, hatch and hood, climate off, the HomeKit-unlock grace, cooldown and attempt cap, and Toyota's own refusal while moving or with a key inside.
+
 ## 0.5.0 - 2026-11-27
 
 - `vehicleName` sets what HomeKit and Siri call the car ("Oliver’s Car"); every tile starts with it, so in a room of the same name the Home app shows plain "Doors", "Hatch Lock", "Front Doors". Toyota's generic sensor labels are clearer ("Front Doors", "Rear Doors", "Windows"), and the hatch lock is "Hatch Lock" so it no longer shares a name with the hatch sensor. The plugin remembers which names it set: changing `vehicleName` renames those, and a name set in the Home app is never touched.

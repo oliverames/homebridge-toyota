@@ -422,7 +422,7 @@ describe('auto-lock through the controller', () => {
     expect(t.api.sent).toEqual(['lock']);
   });
 
-  it('never locks a moving car or one that does not report speed', async () => {
+  it('never locks a moving car, but locks one reported off that gives no speed', async () => {
     const moving = car([doors(false, MIN)], { speed: 12, reportedAtMs: NOW });
     (moving.controller as unknown as { autoLockState: object }).autoLockState = { attempts: 0, evidenceWakes: 0, unlockedSince: NOW - 30 * MIN };
     await moving.controller.poll();
@@ -430,7 +430,7 @@ describe('auto-lock through the controller', () => {
     const unknown = car([doors(false, MIN)], { reportedAtMs: NOW });
     (unknown.controller as unknown as { autoLockState: object }).autoLockState = { attempts: 0, evidenceWakes: 0, unlockedSince: NOW - 30 * MIN };
     await unknown.controller.poll();
-    expect(unknown.api.sent).toEqual([]);
+    expect(unknown.api.sent).toEqual(['lock']);
   });
 
   it('an unlock from HomeKit during the telemetry read stops the attempt and keeps its grace', async () => {

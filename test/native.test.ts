@@ -56,10 +56,10 @@ describe('auto-lock without telemetry', () => {
     expect(state.unlockedAt).toEqual({ latitude: 44.27, longitude: -72.575 });
     expect(state.unlockedSince).toBe(NOW - MIN);
   });
-  it('asks for a fresh report when the position is old, and fails closed with no position at all', () => {
+  it('asks for a fresh report when the lock report is old, and needs no position when the car reports off', () => {
     expect(decide(ready(), unlocked(20 * MIN)).action).toBe('wake');
     const noPosition: RemoteStatus = { ...unlocked(MIN), location: undefined };
-    expect(decide({ ...ready(), evidenceWakes: AUTO_LOCK.maxEvidenceWakes }, noPosition).action).toBe('none');
+    expect(decide({ ...ready(), evidenceWakes: AUTO_LOCK.maxEvidenceWakes }, noPosition).action).toBe('lock');
   });
   it('records where the doors were first seen unlocked', () => {
     const state = emptyAutoLockState();

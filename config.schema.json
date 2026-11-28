@@ -91,7 +91,7 @@
         "properties": {
           "enabled": {
             "title": "Lock the doors when the car is left unlocked",
-            "description": "Locks once the doors have been reported unlocked for the time below with the car parked (fresh zero-speed telemetry), every door, the hatch and the hood closed, and the engine and climate off. Waits 15 minutes after an unlock from HomeKit, tries at most 3 times per unlock, and may wake the car up to 3 times per unlock for a fresh report. The car itself refuses while a key is inside.",
+            "description": "Locks once the doors have been reported unlocked for the time below with the car reported off and not moved since the unlock, every door, the hatch and the hood closed, and climate off. Waits 15 minutes after an unlock from HomeKit, tries at most 3 times per unlock, and may wake the car up to 3 times per unlock for a fresh report. The car itself refuses while a key is inside.",
             "type": "boolean",
             "default": false
           },

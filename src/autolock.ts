@@ -3,8 +3,9 @@ import { distanceMeters, type RemoteStatus, type Telemetry, type VehicleLocation
 /**
  * Auto-lock, ported from RedLink's `ToyotaAutoLock`. Toyota exposes no key or
  * fob proximity, gear or ignition signal, so "parked and not in use" is
- * inferred: fresh zero-speed telemetry, every door, the hatch and the hood
- * closed, and no engine or climate running. The vehicle's own interlock also
+ * inferred: the car reported off (people rarely sit in a car that is off),
+ * every door, the hatch and the hood closed, no climate running, and no
+ * speed or position showing it moved since the unlock. The vehicle's own interlock also
  * refuses a remote lock while a key is inside. One addition over RedLink: the
  * doors must have been reported unlocked for `afterMs` first, because this
  * runs unattended on every poll, not only when an app happens to refresh.
@@ -125,10 +126,12 @@ export function decideAutoLock(state: AutoLockState, input: AutoLockInput): Auto
   if (running === undefined) {
     return { action: 'none', reason: 'the engine state is unknown' };
   }
-  // Parked evidence: fresh zero-speed telemetry, or a fresh position that has not moved since the unlock.
+  // The car reported off, which is the parked evidence. Speed or a position
+  // that moved since the unlock still vetoes it, and a fresh lock report is
+  // required. Engine status is read every poll, so "off" is current.
   const telemetryFresh = telemetry !== undefined && fresh(telemetry.reportedAtMs, now) ? telemetry : undefined;
   const locationFresh = location !== undefined && fresh(location.reportedAtMs, now) ? location : undefined;
-  if (!fresh(status.reportedAtMs, now) || (!telemetryFresh && !locationFresh)) {
+  if (!fresh(status.reportedAtMs, now)) {
     if (state.evidenceWakes >= AUTO_LOCK.maxEvidenceWakes) {
       return { action: 'none', reason: 'fresh-report limit reached for this unlock' };
     }
@@ -137,14 +140,10 @@ export function decideAutoLock(state: AutoLockState, input: AutoLockInput): Auto
     }
     return { action: 'wake' };
   }
-  if (telemetryFresh?.speed !== undefined) {
-    return telemetryFresh.speed > 0.01 ? { action: 'none', reason: 'the vehicle is moving' } : { action: 'lock' };
+  if (telemetryFresh?.speed !== undefined && telemetryFresh.speed > 0.01) {
+    return { action: 'none', reason: 'the vehicle is moving' };
   }
-  // Unattended, so missing evidence fails closed.
-  if (!locationFresh || !state.unlockedAt) {
-    return { action: 'none', reason: 'the vehicle reports neither its speed nor a usable position' };
-  }
-  if (distanceMeters(locationFresh, state.unlockedAt) > AUTO_LOCK.parkedRadiusMeters) {
+  if (locationFresh && state.unlockedAt && distanceMeters(locationFresh, state.unlockedAt) > AUTO_LOCK.parkedRadiusMeters) {
     // It was driven since the unlock: start the episode over from here.
     state.unlockedSince = seenUnlockedAt;
     state.unlockedAt = { latitude: locationFresh.latitude, longitude: locationFresh.longitude };

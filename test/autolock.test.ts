@@ -51,12 +51,18 @@ describe('auto-lock policy', () => {
   });
   it('asks for a fresh report when the lock report or telemetry is old, within its own limits', () => {
     expect(decide(ready(), status(false, { ageMs: 20 * MIN })).action).toBe('wake');
-    expect(decide(ready(), status(false), { telemetry: { speed: 0, reportedAtMs: NOW - 20 * MIN } }).action).toBe('wake');
+    // Old telemetry no longer needs a wake: the car reporting off is the parked evidence.
+    expect(decide(ready(), status(false), { telemetry: { speed: 0, reportedAtMs: NOW - 20 * MIN } }).action).toBe('lock');
     expect(decide({ ...ready(), evidenceWakes: AUTO_LOCK.maxEvidenceWakes }, status(false, { ageMs: 20 * MIN })).action).toBe('none');
     expect(decide({ ...ready(), evidenceWakes: 1, lastEvidenceWake: NOW - 5 * MIN }, status(false, { ageMs: 20 * MIN })).action).toBe('none');
   });
-  it('fails closed on unknown speed or lock state, and never locks a moving car', () => {
-    expect(decide(ready(), status(false), { telemetry: { reportedAtMs: NOW } }).action).toBe('none');
+  it('locks a car reported off without speed or position, unless it moved since the unlock', () => {
+    expect(decide(ready(), status(false), { telemetry: undefined }).action).toBe('lock');
+    const moved: AutoLockState = { ...ready(), unlockedAt: { latitude: 44.26, longitude: -72.58 } };
+    const away = { ...status(false), location: { latitude: 44.27, longitude: -72.58, reportedAtMs: NOW - MIN } };
+    expect(decide(moved, away, { telemetry: undefined })).toMatchObject({ action: 'none', reason: 'the vehicle has moved since it was unlocked' });
+  });
+  it('fails closed on unknown lock or engine state, and never locks a moving car', () => {
     expect(decide(ready(), status(false), { telemetry: { speed: 5, reportedAtMs: NOW } }).action).toBe('none');
     expect(decide(ready(), status(null)).action).toBe('none');
     expect(decide(ready(), status(false), { running: undefined })).toMatchObject({ action: 'none', reason: 'the engine state is unknown' });
