@@ -1,5 +1,15 @@
 # Worklog
 
+## 2026-11-27 - 0.5.0: Oliver’s Car room, At Home, Jammed, auto-lock without telemetry
+
+**What changed**: In HomeKit (via iMCP on the MacBook Pro): created room "Oliver’s Car", moved the accessory out of Driveway, renamed it "Oliver’s Car" and its services (Doors, Hatch Lock, Remote Start, EV Battery, Front Doors, Rear Doors, Windows, Hood, Hatch). Probing on home-server found `v1/location` and `v3/telemetry` answer 403 for this bZ, while remote status carries `latitude`, `longitude`, `locationAcquisitionDatetime`; 0.4.x auto-lock therefore could never confirm parked. Home was set from the car's position at 2026-11-28T00:25:15Z (radius 150 m; coordinates never printed). 0.5.0: `vehicleName` with plugin-owned name tracking, clearer labels, At Home occupancy sensor, Jammed on failed lock, location-based parked evidence for auto-lock, no auth retry and 12 h parking for optional reads. Lock-screen battery: HomeKit cannot; RedLink already ships accessoryCircular/Rectangular/Inline widgets.
+
+**Verified**: 214 tests, full typecheck, lint and build pass locally. Live after a full Homebridge restart (approved) at 19:34: 7 child bridges, UI 200, summary shows "At Home sensor within 150 m, named \"Oliver’s Car\"", HomeKit reads At Home occupied, EV 93% charging, both locks secured.
+
+**Left off at**: Not yet exercised live: an auto-lock using position evidence, Jammed, At Home leaving and arriving. Watch item: whether engine status flips off on its own when a remote start times out (the log now records it). Open: PS5 pairing in Oliver's terminal tab; UDM 3 AM window.
+
+---
+
 ## 2026-11-27 - 0.4.3: charge level while charging
 
 **What changed**: Oliver noticed HomeKit stuck at 7% though the bZ had been charging for hours. The EV charge level is a separate Toyota snapshot (`v3/electric/status`, time in `vehicleInfo.acquisitionDatetime`) that `refresh-status` never updates. 0.4.3 ports RedLink's `electricRefresh` (`POST v2/electric/realtime-status` with `device-id`, v1 fallback): every 30 min while charging (`chargingRefreshMinutes`), and best effort alongside every door wake.
