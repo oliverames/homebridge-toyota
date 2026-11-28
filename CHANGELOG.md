@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.3 - 2026-11-27
+
+- The EV charge level updates while charging. Toyota keeps it in a separate EV snapshot that the door refresh never touches, so on 2026-11-27 HomeKit stayed at the 7% the car reported when it was plugged in. While charging, the plugin now asks for a fresh EV snapshot (`v2/electric/realtime-status`, with RedLink's v1 fallback) once the snapshot is `chargingRefreshMinutes` old (default 30, minimum 15, `0` off), then reads it for about two minutes. Every door refresh also refreshes the EV snapshot, best effort.
+- The EV snapshot's own report time (`vehicleInfo.acquisitionDatetime`) is read and shown in each update's summary.
+
 ## 0.4.2 - 2026-11-27
 
 - Logging covers every part of the plugin. Always logged: a startup summary of the settings in effect, every HomeKit request, each opening opened or closed, charging started or stopped, the engine or climate turning on or off, command confirmation times, and full sign-ins. Debug lines add every Toyota request with its status and duration, network failures by kind, each token refresh with the remaining sign-in lifetime, a summary after every update, auto-lock's reasoning, and backoff and fast-polling decisions.

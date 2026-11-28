@@ -113,7 +113,7 @@ describe('HomeKit and vehicle events are logged', () => {
     });
     const controller = new VehicleController('V', '21MM', {
       listVehicles: async () => [], readStatus: async () => status(false), readElectric: async () => ({}), readRunning: async () => false,
-      sendCommand: async () => {}, requestRefresh: async () => {}, readTelemetry: async () => ({}),
+      sendCommand: async () => {}, requestRefresh: async () => {}, requestElectricRefresh: async () => {}, readTelemetry: async () => ({}),
     }, { remoteStart: false, exposeBattery: false, verifyDelaysMs: [0], sleep: async () => {} }, view, log as never);
     view.attach(controller);
 

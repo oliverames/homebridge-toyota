@@ -36,6 +36,8 @@ export interface VehicleApi {
   sendCommand(command: VehicleCommand, vin: string, generation: Generation, electric: boolean): Promise<void>;
   /** Asks the vehicle to upload a fresh status report. Wakes the car; callers ration it. */
   requestRefresh(vin: string, generation: Generation): Promise<void>;
+  /** Asks the vehicle for a fresh EV snapshot. Wakes the car; callers ration it. */
+  requestElectricRefresh(vin: string, generation: Generation): Promise<void>;
   /** Speed and its report time, used to tell that the vehicle is parked. */
   readTelemetry(vin: string, generation: Generation): Promise<Telemetry>;
 }
@@ -93,6 +95,19 @@ export class ToyotaVehicleApi implements VehicleApi {
       }
     }
     return parseEngineRunning((await this.client.send(() => routes.engineStatus(generation), vin, generation)).data);
+  }
+
+  async requestElectricRefresh(vin: string, generation: Generation): Promise<void> {
+    try {
+      await this.client.send((s) => routes.electricRefresh(s), vin, generation);
+    } catch (error) {
+      // RedLink's fallback route when the v2 path is not offered for a vehicle.
+      if (error instanceof ApiHttpError && (error.status === 404 || error.status === 400)) {
+        await this.client.send((s) => routes.electricRefresh(s, true), vin, generation);
+        return;
+      }
+      throw error;
+    }
   }
 
   async readTelemetry(vin: string, generation: Generation): Promise<Telemetry> {

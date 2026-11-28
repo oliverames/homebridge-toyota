@@ -57,6 +57,14 @@
         "minimum": 5,
         "maximum": 1440
       },
+      "chargingRefreshMinutes": {
+        "title": "Fresh charge level while charging (minutes)",
+        "description": "Toyota keeps the EV charge level in its own snapshot, which only updates when the car uploads it. While charging, ask the car for a fresh one this often so the battery level climbs in HomeKit. Default 30, minimum 15, 0 turns it off.",
+        "type": "number",
+        "default": 30,
+        "minimum": 0,
+        "maximum": 1440
+      },
       "wakeOnHomeAppOpen": {
         "title": "Fresh report when you open the car in the Home app",
         "description": "When the Home app shows the car and its last report is 15 minutes old or more, ask the car for a fresh one. Wakes the car; at most eight a day from this.",
@@ -155,7 +163,7 @@
       "title": "Advanced",
       "expandable": true,
       "expanded": false,
-      "items": ["vin", "generation", "pollIntervalMinutes", "wakeOnHomeAppOpen", "staleReportHours", "graphqlApiKey", "appVersion", "debug"]
+      "items": ["vin", "generation", "pollIntervalMinutes", "wakeOnHomeAppOpen", "chargingRefreshMinutes", "staleReportHours", "graphqlApiKey", "appVersion", "debug"]
     }
   ]
 }

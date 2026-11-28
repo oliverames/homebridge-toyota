@@ -206,6 +206,15 @@ export const routes = {
     }
     return { method: 'POST', path: 'v1/global/remote/refresh-status', body: { guid: session.guid, deviceId: session.deviceId, vin } };
   },
+  /**
+   * Asks the vehicle for a fresh EV snapshot (charge level and state), RedLink's
+   * `electricRefresh`. The door refresh does not update it. May wake the car.
+   */
+  electricRefresh: (session: Session, legacyPath = false): Route => ({
+    method: 'POST',
+    path: legacyPath ? 'v1/global/remote/electric/realtime-status' : 'v2/electric/realtime-status',
+    extraHeaders: { 'device-id': session.deviceId },
+  }),
   startClimate: (session: Session): Route => ({
     method: 'POST',
     path: 'v2/electric/command',

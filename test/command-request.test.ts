@@ -192,3 +192,18 @@ describe('telemetry request (pinned against RedLink ToyotaRequestFactory .teleme
     expect(net.calls[1]!.url).toMatch(/\/v2\/telemetry$/);
   });
 });
+
+describe('EV refresh request (pinned against RedLink ToyotaRequestFactory .electricRefresh)', () => {
+  it('posts to v2/electric/realtime-status with a device-id header, falling back to the v1 route on 404', async () => {
+    let first = true;
+    const { api, net } = build(() => {
+      if (first) { first = false; return new Response('', { status: 404 }); }
+      return new Response('{"status":"SUCCESS","payload":{}}', { status: 200 });
+    });
+    await api.requestElectricRefresh(VIN, '21MM');
+    expect(net.calls[0]!.url).toMatch(/\/v2\/electric\/realtime-status$/);
+    expect(net.calls[0]!.init?.method).toBe('POST');
+    expect(new Headers(net.calls[0]!.init?.headers).get('device-id')).toBe('device-abc');
+    expect(net.calls[1]!.url).toMatch(/\/v1\/global\/remote\/electric\/realtime-status$/);
+  });
+});

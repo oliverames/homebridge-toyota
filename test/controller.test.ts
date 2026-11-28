@@ -40,6 +40,12 @@ class FakeApi implements VehicleApi {
   refreshes = 0;
   refreshError?: Error;
   telemetry: Telemetry = {};
+  evRefreshes = 0;
+  evRefreshError?: Error;
+  async requestElectricRefresh(): Promise<void> {
+    this.evRefreshes++;
+    if (this.evRefreshError) throw this.evRefreshError;
+  }
   async readTelemetry(): Promise<Telemetry> {
     return this.telemetry;
   }
@@ -456,5 +462,68 @@ describe('auto-lock through the controller', () => {
     t.api.sent.length = 0;
     await t.controller.poll();
     expect(t.api.sent).toEqual([]);
+  });
+});
+
+describe('EV charge level while charging', () => {
+  const MIN = 60_000;
+  const NOW = Date.parse('2026-11-27T23:17:00Z');
+  function charging(evAgeMs: number, fresh?: { percent: number }) {
+    const api = new FakeApi();
+    api.statuses = [{ openings: [], doorsLocked: true, reportedAt: 't', reportedAtMs: NOW - MIN }];
+    const stale = { batteryPercent: 7, charging: true, reportedAt: 'old', reportedAtMs: NOW - evAgeMs };
+    let evReads = 0;
+    api.readElectric = async () => {
+      evReads++;
+      return evReads === 1 || !fresh ? stale : { batteryPercent: fresh.percent, charging: true, reportedAt: 'new', reportedAtMs: NOW };
+    };
+    const lines: string[] = [];
+    const states: VehicleState[] = [];
+    let saved: number | undefined;
+    const controller = new VehicleController(
+      'VIN', '21MM', api,
+      { remoteStart: false, exposeBattery: true, electricHint: true, evChargingRefreshMs: 30 * MIN, evWakeStore: { load: () => saved, save: (v) => { saved = v; } }, wakeWaitDelaysMs: [0, 0], now: () => NOW, sleep: async () => {} },
+      { stateChanged: (s) => states.push(structuredClone(s)), commandFailed() {} },
+      { info: (m) => lines.push(m), warn: (m) => lines.push(`warn:${m}`), debug() {} },
+    );
+    return { api, controller, lines, states, saved: () => saved };
+  }
+
+  it('asks for a fresh EV snapshot when charging and the charge report is old, and shows the new level', async () => {
+    const t = charging(3 * 60 * MIN, { percent: 38 });
+    expect(await t.controller.poll()).toBe('ok');
+    expect(t.api.evRefreshes).toBe(1);
+    expect(t.states.at(-1)?.electric?.batteryPercent).toBe(38);
+    expect(t.lines[0]).toBe('Charging, and the EV battery report (7%) is 3.0 hours old; asking the vehicle for a fresh one.');
+    expect(t.lines.at(-1)).toBe('The vehicle sent a fresh EV report: 38%, charging (new).');
+    expect(t.saved()).toBe(NOW);
+  });
+
+  it('leaves a recent charge report alone and rations requests across restarts', async () => {
+    const recent = charging(10 * MIN);
+    await recent.controller.poll();
+    expect(recent.api.evRefreshes).toBe(0);
+    const t = charging(3 * 60 * MIN);
+    await t.controller.poll();
+    await t.controller.poll();
+    expect(t.api.evRefreshes).toBe(1);
+  });
+
+  it('a refused EV refresh is logged and does not fail the update', async () => {
+    const t = charging(3 * 60 * MIN);
+    t.api.evRefreshError = new ApiHttpError(500, '');
+    expect(await t.controller.poll()).toBe('ok');
+    expect(t.lines.some((l) => l.startsWith('warn:Toyota refused the EV refresh'))).toBe(true);
+  });
+
+  it('a door wake also refreshes the EV snapshot', async () => {
+    const api = new FakeApi();
+    api.statuses = [{ openings: [], doorsLocked: true, reportedAt: 't', reportedAtMs: NOW - 5 * 60 * MIN }];
+    const controller = new VehicleController('VIN', '21MM', api,
+      { remoteStart: false, exposeBattery: true, electricHint: true, staleReportMs: 3 * 60 * MIN, wakeWaitDelaysMs: [0], now: () => NOW, sleep: async () => {} },
+      { stateChanged() {}, commandFailed() {} }, noop);
+    await controller.poll();
+    expect(api.refreshes).toBe(1);
+    expect(api.evRefreshes).toBe(1);
   });
 });

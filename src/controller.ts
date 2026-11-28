@@ -50,6 +50,13 @@ export interface ControllerOptions {
   interestWakeMs?: number;
   /** Something just happened (a command, a wake, the engine running): poll closely for a while. */
   onActivity?: () => void;
+  /**
+   * Ask for a fresh EV snapshot when it is this old while charging, so the
+   * charge level climbs in HomeKit (the car is on mains power then). Unset or 0: never.
+   */
+  evChargingRefreshMs?: number;
+  /** Remembers the last EV refresh across restarts. */
+  evWakeStore?: WakeStore;
   /** Lock the doors once they have been reported unlocked this long with the car parked. Unset: off. */
   autoLock?: { afterMs: number; store?: AutoLockStore };
   now?: () => number;
@@ -95,6 +102,8 @@ export class VehicleController {
   private lastWake?: number;
   private refreshUnsupported = false;
   private waking = false;
+  private lastEvWake?: number;
+  private evRefreshUnsupported = false;
   private interestWakes: number[] = [];
   private autoLockState?: AutoLockState;
   private readonly startedAt: number;
@@ -175,6 +184,9 @@ export class VehicleController {
     }
     if (worst === 'ok') {
       worst = await this.refreshIfStale();
+    }
+    if (worst === 'ok') {
+      worst = await this.refreshElectricIfStale();
     }
     if (worst === 'ok') {
       await this.autoLockStep(true);
@@ -273,6 +285,10 @@ export class VehicleController {
       return outcome === 'rateLimited' ? outcome : 'ok';
     }
     this.activity();
+    // The door refresh leaves the EV snapshot as it was, so refresh it alongside, best effort (RedLink does the same).
+    if (this.options.exposeBattery && this.electricLike && !this.evRefreshUnsupported && this.now() >= this.electricParkedUntil) {
+      await this.sendElectricRefresh('alongside the door report');
+    }
     for (const delay of this.options.wakeWaitDelaysMs ?? DEFAULT_WAKE_WAIT_DELAYS_MS) {
       await this.sleep(delay);
       let fresh: RemoteStatus;
@@ -294,6 +310,89 @@ export class VehicleController {
     }
     this.log.info(`The vehicle has not sent a fresh report yet; a later poll will show it if it arrives. Next request in ${retry} at the earliest.`);
     return 'ok';
+  }
+
+  /**
+   * While charging, the EV snapshot (charge level) only moves when the car
+   * uploads it, and the door refresh does not trigger that. Ask for a fresh one
+   * when it is `evChargingRefreshMs` old, then read it for about two minutes. Never throws.
+   */
+  private async refreshElectricIfStale(): Promise<PollOutcome> {
+    const intervalMs = this.options.evChargingRefreshMs ?? 0;
+    const electric = this.state.electric;
+    if (intervalMs <= 0 || !this.options.exposeBattery || this.evRefreshUnsupported || this.pending || this.waking || electric?.charging !== true) {
+      return 'ok';
+    }
+    if (this.now() < this.electricParkedUntil) {
+      return 'ok';
+    }
+    const now = this.now();
+    if (electric.reportedAtMs !== undefined && now - electric.reportedAtMs < intervalMs) {
+      return 'ok';
+    }
+    this.lastEvWake ??= this.options.evWakeStore?.load();
+    if (this.lastEvWake !== undefined && now - this.lastEvWake >= 0 && now - this.lastEvWake < intervalMs) {
+      return 'ok';
+    }
+    const age = electric.reportedAtMs === undefined ? 'has no report time' : `is ${formatAge(now - electric.reportedAtMs)} old`;
+    this.log.info(`Charging, and the EV battery report (${electric.batteryPercent ?? '?'}%) ${age}; asking the vehicle for a fresh one.`);
+    this.waking = true;
+    try {
+      const outcome = await this.sendElectricRefresh();
+      if (outcome !== 'ok') {
+        return outcome;
+      }
+      this.activity();
+      const before = electric.reportedAtMs;
+      for (const delay of this.options.wakeWaitDelaysMs ?? DEFAULT_WAKE_WAIT_DELAYS_MS) {
+        await this.sleep(delay);
+        let fresh: ElectricStatus;
+        try {
+          fresh = await this.api.readElectric(this.vin, this.generation);
+        } catch (error) {
+          if (classifyError(error) !== 'failed') {
+            break;
+          }
+          this.log.debug(`EV read while waiting for a fresh snapshot failed; trying again: ${describe(error)}`);
+          continue;
+        }
+        if (fresh.reportedAtMs !== undefined && (before === undefined || fresh.reportedAtMs > before)) {
+          this.state.electric = fresh;
+          this.emit();
+          this.log.info(`The vehicle sent a fresh EV report: ${fresh.batteryPercent ?? '?'}%${fresh.charging === true ? ', charging' : fresh.charging === false ? ', not charging' : ''} (${fresh.reportedAt}).`);
+          return 'ok';
+        }
+      }
+      this.log.info(`No fresh EV report yet; a later update will show it if it arrives. Next request in ${formatAge(intervalMs)} at the earliest.`);
+      return 'ok';
+    } finally {
+      this.waking = false;
+    }
+  }
+
+  /** Sends the EV refresh and records it. A refusal is logged and never fails the caller's work. */
+  private async sendElectricRefresh(context?: string): Promise<PollOutcome> {
+    const now = this.now();
+    this.lastEvWake = now;
+    try {
+      this.options.evWakeStore?.save(now);
+    } catch (error) {
+      this.log.debug(`Could not save the EV refresh time: ${describe(error)}`);
+    }
+    try {
+      await this.api.requestElectricRefresh(this.vin, this.generation);
+      this.log.debug(`EV refresh accepted${context ? ` ${context}` : ''}.`);
+      return 'ok';
+    } catch (error) {
+      if (error instanceof UnsupportedError || endpointRefusal(error) === 'permanent') {
+        this.evRefreshUnsupported = true;
+        this.log.info(`This vehicle does not accept EV refresh requests (${describe(error)}); the charge level will be as fresh as the vehicle's own uploads.`);
+        return 'ok';
+      }
+      this.log.warn(`Toyota refused the EV refresh${context ? ` ${context}` : ''}: ${describe(error)}`);
+      const outcome = classifyError(error);
+      return outcome === 'rateLimited' && !context ? outcome : 'ok';
+    }
   }
 
   private loadAutoLockState(): AutoLockState {
@@ -399,7 +498,8 @@ export class VehicleController {
     }
     const electric = this.state.electric;
     if (electric?.batteryPercent !== undefined) {
-      parts.push(`EV battery ${Math.round(electric.batteryPercent)}%${electric.charging === true ? ', charging' : electric.charging === false ? ', not charging' : ''}`);
+      const evAge = electric.reportedAtMs === undefined ? '' : `, EV report ${formatAge(this.now() - electric.reportedAtMs)} old`;
+      parts.push(`EV battery ${Math.round(electric.batteryPercent)}%${electric.charging === true ? ', charging' : electric.charging === false ? ', not charging' : ''}${evAge}`);
     }
     if (this.state.running !== undefined) {
       parts.push(`engine ${this.state.running ? 'running' : 'off'}`);

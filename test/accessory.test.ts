@@ -33,7 +33,7 @@ function build(opts: { remoteStart?: boolean; exposeOpenings?: boolean; exposeBa
     readElectric: async () => ({}),
     readRunning: async () => true,
     sendCommand: async (c) => { sent.push(c); },
-    requestRefresh: async () => {},
+    requestRefresh: async () => {}, requestElectricRefresh: async () => {},
     readTelemetry: async () => ({}),
   };
   const controller = new VehicleController('V', '21MM', fake, { remoteStart: !!opts.remoteStart, exposeBattery: true, prepare: opts.prepare ? { closeWindows: true, closeMoonroof: true, lockTrunk: true } : undefined, verifyDelaysMs: [0], sleep: async () => {} }, view, log);
@@ -188,7 +188,7 @@ describe('freshness and the hatch lock', () => {
     const { api, view, hatch } = make(true);
     const sent: VehicleCommand[] = [];
     const controller = new VehicleController('V', '21MM', {
-      listVehicles: async () => [], readElectric: async () => ({}), readRunning: async () => false, requestRefresh: async () => {}, readTelemetry: async () => ({}),
+      listVehicles: async () => [], readElectric: async () => ({}), readRunning: async () => false, requestRefresh: async () => {}, requestElectricRefresh: async () => {}, readTelemetry: async () => ({}),
       readStatus: async () => withHatch(sent.at(-1) === 'unlockTrunk' ? false : true),
       sendCommand: async (c) => { sent.push(c); },
     }, { remoteStart: false, exposeBattery: false, verifyDelaysMs: [0], sleep: async () => {} }, view, log);

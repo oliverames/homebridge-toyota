@@ -110,6 +110,7 @@ Set `remoteStart.prepare` to `false` to start immediately instead. Toyota allows
 | `pollIntervalMinutes` | No | `5` | Minimum 5. Backs off automatically on errors. |
 | `debug` | No | `false` | Show the plugin's detailed log lines (every request with status and timing, token refreshes, a summary after each update) in the normal log, marked `[debug]`. |
 | `autoLock.enabled` | No | `false` | Lock the doors when they have been reported unlocked for `autoLock.afterMinutes` (default 10) with the car parked, closed and idle. See the design notes for its limits. |
+| `chargingRefreshMinutes` | No | `30` | While charging, ask the car for a fresh charge level this often. Minimum 15; `0` turns it off. |
 | `wakeOnHomeAppOpen` | No | `true` | When the Home app shows the car and its report is 15+ minutes old, ask the car for a fresh one. At most eight a day. |
 | `staleReportHours` | No | `3` | Once Toyota's report from the car is this many hours old, ask the car for a fresh one, at most once per this interval. Each request wakes the car. Minimum 3; `0` turns it off. |
 | `exposeOpenings` | No | `true` | Contact sensors for doors, windows, trunk, hood and moonroof. |

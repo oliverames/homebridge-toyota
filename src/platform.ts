@@ -160,9 +160,9 @@ export class ToyotaPlatform implements DynamicPlatformPlugin {
   }
 
   /** Last wake time per vehicle, kept beside the session so a restart does not wake the car again. */
-  private wakeStore(vin: string): WakeStore {
+  private wakeStore(vin: string, name = 'wake'): WakeStore {
     const file = new FileStore<{ wokeAt: number }>(
-      join(this.api.user.storagePath(), 'homebridge-toyota', `wake-${vin}.json`),
+      join(this.api.user.storagePath(), 'homebridge-toyota', `${name}-${vin}.json`),
       (v): v is { wokeAt: number } => typeof v === 'object' && v !== null && typeof (v as { wokeAt?: unknown }).wokeAt === 'number',
     );
     return { load: () => file.load()?.wokeAt, save: (wokeAt) => file.save({ wokeAt }) };
@@ -266,6 +266,8 @@ export class ToyotaPlatform implements DynamicPlatformPlugin {
         staleReportMs: config.staleReportHours * 60 * 60 * 1000,
         wakeStore: this.wakeStore(vehicle.vin),
         interestWakeMs: config.wakeOnHomeAppOpen ? INTEREST_WAKE_MS : 0,
+        evChargingRefreshMs: config.chargingRefreshMinutes * 60_000,
+        evWakeStore: this.wakeStore(vehicle.vin, 'ev-wake'),
         onActivity: () => this.poller?.hurry(Date.now() + FAST_POLL_WINDOW_MS),
         autoLock: config.autoLockMinutes === undefined ? undefined : { afterMs: config.autoLockMinutes * 60_000, store: this.autoLockStore(vehicle.vin) },
       },
@@ -303,6 +305,7 @@ export function describeSettings(config: ToyotaConfig): string {
     `polling every ${config.pollIntervalMinutes} min`,
     config.staleReportHours > 0 ? `fresh report after ${config.staleReportHours} h` : 'no stale-report requests',
     config.wakeOnHomeAppOpen ? 'fresh report on Home app open' : 'no Home app requests',
+    config.chargingRefreshMinutes > 0 ? `charge level every ${config.chargingRefreshMinutes} min while charging` : 'no charging refresh',
     config.autoLockMinutes === undefined ? 'auto-lock off' : `auto-lock after ${config.autoLockMinutes} min`,
     config.remoteStartEnabled ? `Remote Start on${config.remoteStartPrepare ? ' with preparation' : ''}` : 'Remote Start off',
     `sensors ${config.exposeOpenings ? 'on' : 'off'}`,

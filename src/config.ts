@@ -23,6 +23,8 @@ export interface ToyotaConfig {
   pollIntervalMinutes: number;
   /** Ask the vehicle for a fresh report once its last one is this many hours old. 0 = never. */
   staleReportHours: number;
+  /** While charging, ask for a fresh EV snapshot this often. 0 = never. */
+  chargingRefreshMinutes: number;
   /** Opening the vehicle in the Home app asks for a fresh report when the last one is 15+ minutes old. */
   wakeOnHomeAppOpen: boolean;
   /** Minutes the doors must be reported unlocked, with the car parked and closed, before auto-lock locks them. Undefined: off. */
@@ -103,6 +105,21 @@ export function parseConfig(raw: Record<string, unknown>): ConfigResult {
     }
   }
 
+  let chargingRefreshMinutes = 30;
+  if (raw['chargingRefreshMinutes'] !== undefined) {
+    const n = Number(raw['chargingRefreshMinutes']);
+    if (!Number.isFinite(n) || n < 0) {
+      warnings.push('"chargingRefreshMinutes" must be 0 or a number of minutes; using 30.');
+    } else if (n === 0) {
+      chargingRefreshMinutes = 0;
+    } else {
+      if (n < 15) {
+        warnings.push('"chargingRefreshMinutes" below 15 is not allowed; using 15.');
+      }
+      chargingRefreshMinutes = Math.min(Math.max(n, 15), 24 * 60);
+    }
+  }
+
   let autoLockMinutes: number | undefined;
   const autoLock = raw['autoLock'];
   if (typeof autoLock === 'object' && autoLock !== null && (autoLock as Record<string, unknown>)['enabled'] === true) {
@@ -139,6 +156,7 @@ export function parseConfig(raw: Record<string, unknown>): ConfigResult {
       pollIntervalMinutes,
       staleReportHours,
       wakeOnHomeAppOpen: raw['wakeOnHomeAppOpen'] !== false,
+      chargingRefreshMinutes,
       autoLockMinutes,
       exposeOpenings: raw['exposeOpenings'] !== false,
       exposeBattery: raw['exposeBattery'] !== false,

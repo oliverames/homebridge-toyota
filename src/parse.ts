@@ -418,6 +418,9 @@ export interface ElectricStatus {
   batteryPercent?: number;
   /** undefined when the state cannot be determined. */
   charging?: boolean;
+  /** When the vehicle uploaded this EV snapshot (`vehicleInfo.acquisitionDatetime`). It is separate from the door report. */
+  reportedAt?: string;
+  reportedAtMs?: number;
 }
 
 const STOPPED_SIGNALS = ['not', 'no_', 'complete', 'completed', 'park', 'idle', 'standby', 'disconnected', 'unplugged', 'finish', 'stopped'];
@@ -427,10 +430,13 @@ export function percentage(value: number | undefined): number | undefined {
   return value !== undefined && value >= 0 && value <= 100 ? value : undefined;
 }
 
-export function parseElectricStatus(data: unknown): ElectricStatus {
+export function parseElectricStatus(data: unknown, now: number = Date.now()): ElectricStatus {
   const chargeInfo = at(data, 'vehicleInfo', 'chargeInfo') ?? at(data, 'payload', 'vehicleInfo', 'chargeInfo');
+  // RedLink's verified EV report field; reportTime applies the same date rules as the door report.
+  const acquired = at(data, 'vehicleInfo', 'acquisitionDatetime') ?? at(data, 'payload', 'vehicleInfo', 'acquisitionDatetime');
+  const time = acquired === undefined ? {} : reportTime({ occurrenceDate: acquired }, now);
   if (!isObject(chargeInfo)) {
-    return {};
+    return { ...time };
   }
   const batteryPercent = percentage(num(chargeInfo['chargeRemainingAmount']));
   const named = str(chargeInfo['connectorStatus']) ?? str(chargeInfo['chargeType']);
@@ -450,7 +456,7 @@ export function parseElectricStatus(data: unknown): ElectricStatus {
       charging = remaining > 0 && remaining < 65535;
     }
   }
-  return { batteryPercent, charging };
+  return { batteryPercent, charging, ...time };
 }
 
 /* -------------------------------------------------------------------------- */

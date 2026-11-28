@@ -89,6 +89,11 @@ describe('remote status', () => {
     expect(() => parseJson('<html>secret-ish page</html>')).toThrow('not JSON (28 bytes)');
     expect(() => parseEnvelope('<html>secret-ish page</html>')).not.toThrow(/secret/);
   });
+  it('reads the EV snapshot time from vehicleInfo.acquisitionDatetime', () => {
+    const now = Date.parse('2026-11-27T23:00:00Z');
+    const ev = parseElectricStatus({ payload: { vehicleInfo: { acquisitionDatetime: '2026-11-27T17:42:10Z', chargeInfo: { chargeRemainingAmount: 7 } } } }, now);
+    expect(ev).toMatchObject({ batteryPercent: 7, reportedAt: '2026-11-27T17:42:10Z', reportedAtMs: Date.parse('2026-11-27T17:42:10Z') });
+  });
   it('reads epoch report times and rejects implausible ones', () => {
     const now = Date.parse('2026-11-27T20:00:00Z');
     expect(reportTime({ lastTimestamp: 1_764_270_000 }, now).reportedAtMs).toBe(1_764_270_000_000);
