@@ -2,7 +2,7 @@ import type { API, Characteristic, CharacteristicValue, Logging, PlatformAccesso
 import { PLUGIN_VERSION } from './settings';
 import type { VehicleCommand } from './api';
 import type { ControllerListener, VehicleController, VehicleState } from './controller';
-import type { RemoteStatus, VehicleSummary } from './parse';
+import { distanceMeters, type RemoteStatus, type VehicleSummary } from './parse';
 import {
   batteryState,
   contactState,
@@ -19,10 +19,23 @@ export interface AccessoryOptions {
   remoteStart: boolean;
   /** The vehicle has a remote hatch lock command; a Hatch lock appears once it also reports a hatch lock value. */
   hatchLock?: boolean;
+  /** The name used for the vehicle in HomeKit ("Oliver’s Car"); every service name starts with it. */
+  name?: string;
+  /** Home position for the At Home occupancy sensor. */
+  home?: { latitude: number; longitude: number; radiusMeters: number };
   now?: () => number;
 }
 
 const REMOTE_START_SUBTYPE = 'remote-start';
+const AT_HOME_SUBTYPE = 'at-home';
+/** A failed lock shows Jammed for at most this long, so a stale alert does not linger. */
+export const JAMMED_MAX_MS = 60 * 60 * 1000;
+
+/** Toyota's generic labels describe a pair or a set; say so in HomeKit. */
+const FRIENDLY_LABELS: Record<string, string> = { Door: 'Front Doors', 'Rear Door': 'Rear Doors', Window: 'Windows' };
+export function friendlyLabel(label: string): string {
+  return FRIENDLY_LABELS[label] ?? label;
+}
 const HATCH_LOCK_SUBTYPE = 'hatch-lock';
 /**
  * A report this old is shown as Unknown rather than a confident Locked or
@@ -40,6 +53,10 @@ export class VehicleAccessory implements ControllerListener {
   private reportedLock = LOCK_UNKNOWN;
   private reportedRunning = false;
   private hatch?: Service;
+  private atHome?: Service;
+  private loggedAtHome?: boolean;
+  /** When a lock attempt failed; the Doors show Jammed until a locked report, a new command, or JAMMED_MAX_MS. */
+  private jammedAt?: number;
   private reportedHatch = LOCK_UNKNOWN;
   private openingsLogged = false;
   /** Last value logged per opening key, so each open or close is logged once. */
@@ -61,7 +78,7 @@ export class VehicleAccessory implements ControllerListener {
     this.Service = api.hap.Service;
     this.Characteristic = api.hap.Characteristic;
     this.now = options.now ?? Date.now;
-    this.prefix = (vehicle.nickname || accessory.displayName || vehicle.displayName).trim();
+    this.prefix = (options.name || vehicle.nickname || accessory.displayName || vehicle.displayName).trim();
     const { Service: S, Characteristic: C } = this;
 
     accessory.getService(S.AccessoryInformation)!
@@ -80,7 +97,7 @@ export class VehicleAccessory implements ControllerListener {
       this.ensureAvailable();
       // The Home app reading the lock means someone is looking at the car.
       this.controller?.noteInterest();
-      return this.reportedLock;
+      return this.jammedAt !== undefined ? this.Characteristic.LockCurrentState.JAMMED : this.reportedLock;
     });
     this.lock
       .getCharacteristic(C.LockTargetState)
@@ -97,6 +114,12 @@ export class VehicleAccessory implements ControllerListener {
       this.configureHatch(cachedHatch);
     } else if (cachedHatch) {
       accessory.removeService(cachedHatch);
+    }
+    const cachedHome = accessory.getServiceById(S.OccupancySensor, AT_HOME_SUBTYPE);
+    if (cachedHome && !options.home) {
+      accessory.removeService(cachedHome);
+    } else if (cachedHome) {
+      this.atHome = cachedHome;
     }
     if (!options.exposeOpenings) {
       this.removeAll(S.ContactSensor.UUID);
@@ -123,9 +146,18 @@ export class VehicleAccessory implements ControllerListener {
     if (!service.testCharacteristic(C.ConfiguredName)) {
       service.addOptionalCharacteristic(C.ConfiguredName);
     }
+    // Remember which names the plugin wrote, so a later name change in the
+    // settings renames them, while a name set in the Home app is never touched.
+    const context = this.accessory.context as { toyotaNames?: Record<string, string> };
+    context.toyotaNames ??= {};
+    const key = service.subtype ?? service.UUID;
     const current = service.getCharacteristic(C.ConfiguredName).value;
-    if (typeof current !== 'string' || current.trim() === '') {
+    const ours = typeof current !== 'string' || current.trim() === '' || current === context.toyotaNames[key];
+    if (ours && current !== full) {
       service.setCharacteristic(C.ConfiguredName, full);
+    }
+    if (ours) {
+      context.toyotaNames[key] = full;
     }
   }
 
@@ -176,7 +208,7 @@ export class VehicleAccessory implements ControllerListener {
   private configureHatch(service: Service): void {
     const { Characteristic: C } = this;
     this.hatch = service;
-    this.name(service, 'Hatch');
+    this.name(service, 'Hatch Lock');
     service.getCharacteristic(C.LockCurrentState).onGet(() => {
       this.ensureAvailable();
       return this.reportedHatch;
@@ -202,6 +234,10 @@ export class VehicleAccessory implements ControllerListener {
   private dispatch(command: VehicleCommand): void {
     const controller = this.controller;
     this.log.info(`HomeKit asked to ${REQUEST_WORDS[command]}.`);
+    if ((command === 'lock' || command === 'unlock') && this.jammedAt !== undefined) {
+      this.jammedAt = undefined;
+      this.lock.updateCharacteristic(this.Characteristic.LockCurrentState, this.reportedLock);
+    }
     if (!controller) {
       this.log.warn(`Not sent: the vehicle is not set up yet.`);
       return;
@@ -215,13 +251,39 @@ export class VehicleAccessory implements ControllerListener {
   commandFailed(command: VehicleCommand, reason: string): void {
     const { Characteristic: C } = this;
     this.log.warn(`${command} did not complete (${reason}); showing the vehicle's reported state.`);
-    if (command === 'lock' || command === 'unlock') {
+    if (command === 'lock' && reason !== 'another command is in progress' && this.reportedLock !== LOCK_SECURED) {
+      // The car did not lock: say so the native way. The Home app treats Jammed as an alert.
+      this.jammedAt = this.now();
+      this.log.warn('The doors did not lock; HomeKit shows them as Jammed until the vehicle reports them locked.');
+      this.lock.updateCharacteristic(C.LockTargetState, LOCK_SECURED);
+      this.lock.updateCharacteristic(C.LockCurrentState, C.LockCurrentState.JAMMED);
+    } else if (command === 'lock' || command === 'unlock') {
       this.lock.updateCharacteristic(C.LockTargetState, lockTargetState(asLocked(this.reportedLock), LOCK_SECURED));
     } else if (command === 'lockTrunk' || command === 'unlockTrunk') {
       this.hatch?.updateCharacteristic(C.LockTargetState, lockTargetState(asLocked(this.reportedHatch), LOCK_SECURED));
     } else {
       this.remoteSwitch?.updateCharacteristic(C.On, this.reportedRunning);
     }
+  }
+
+  /** At Home: the last reported position within the configured radius of home. Coordinates are never logged. */
+  private updateAtHome(status: RemoteStatus): void {
+    const home = this.options.home;
+    const location = status.location;
+    if (!home || !location) {
+      return;
+    }
+    const { Service: S, Characteristic: C } = this;
+    if (!this.atHome) {
+      this.atHome = this.accessory.addService(S.OccupancySensor, 'At Home', AT_HOME_SUBTYPE);
+    }
+    this.name(this.atHome, 'At Home');
+    const atHome = distanceMeters(location, home) <= home.radiusMeters;
+    if (this.loggedAtHome !== undefined && this.loggedAtHome !== atHome) {
+      this.log.info(`${this.prefix} ${atHome ? 'is home' : 'left home'} (position reported ${location.reportedAt ?? 'with no time'}).`);
+    }
+    this.loggedAtHome = atHome;
+    this.atHome.updateCharacteristic(C.OccupancyDetected, atHome ? C.OccupancyDetected.OCCUPANCY_DETECTED : C.OccupancyDetected.OCCUPANCY_NOT_DETECTED);
   }
 
   private updateHatch(status: RemoteStatus, tooOld: boolean, pending: boolean): void {
@@ -262,11 +324,19 @@ export class VehicleAccessory implements ControllerListener {
             : describeLockReport(status),
         );
       }
-      this.lock.updateCharacteristic(C.LockCurrentState, this.reportedLock);
-      if (!pending) {
-        this.lock.updateCharacteristic(C.LockTargetState, lockTargetState(doorsLocked, LOCK_SECURED));
+      if (this.jammedAt !== undefined && (doorsLocked === true || this.now() - this.jammedAt > JAMMED_MAX_MS)) {
+        this.jammedAt = undefined;
+      }
+      if (this.jammedAt !== undefined) {
+        this.lock.updateCharacteristic(C.LockCurrentState, C.LockCurrentState.JAMMED);
+      } else {
+        this.lock.updateCharacteristic(C.LockCurrentState, this.reportedLock);
+        if (!pending) {
+          this.lock.updateCharacteristic(C.LockTargetState, lockTargetState(doorsLocked, LOCK_SECURED));
+        }
       }
       this.updateHatch(status, tooOld, pending);
+      this.updateAtHome(status);
       if (this.options.exposeOpenings) {
         for (const opening of state.status.openings) {
           const value = contactState(opening.open);
@@ -276,11 +346,11 @@ export class VehicleAccessory implements ControllerListener {
           const service =
             this.accessory.getServiceById(S.ContactSensor, opening.key) ??
             this.accessory.addService(S.ContactSensor, opening.label, opening.key);
-          this.name(service, opening.label);
+          this.name(service, friendlyLabel(opening.label));
           const open = opening.open === true;
           const before = this.openingStates.get(opening.key);
           if (before !== undefined && before !== open) {
-            this.log.info(`${opening.label} reported ${open ? 'open' : 'closed'} (${status.reportedAt ?? 'no report time'}).`);
+            this.log.info(`${friendlyLabel(opening.label)} reported ${open ? 'open' : 'closed'} (${status.reportedAt ?? 'no report time'}).`);
           }
           this.openingStates.set(opening.key, open);
           service.updateCharacteristic(C.ContactSensorState, value);

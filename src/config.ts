@@ -39,6 +39,10 @@ export interface ToyotaConfig {
   appVersion: string;
   /** Show this plugin's debug lines in the normal log, without running all of Homebridge in debug mode. */
   debug: boolean;
+  /** The vehicle's name in HomeKit; every tile name starts with it. Default: the Toyota nickname. */
+  vehicleName?: string;
+  /** Home position for the At Home occupancy sensor. */
+  home?: { latitude: number; longitude: number; radiusMeters: number };
 }
 
 export interface ConfigResult {
@@ -120,6 +124,20 @@ export function parseConfig(raw: Record<string, unknown>): ConfigResult {
     }
   }
 
+  let home: ToyotaConfig['home'];
+  const rawHome = raw['home'];
+  if (typeof rawHome === 'object' && rawHome !== null) {
+    const h = rawHome as Record<string, unknown>;
+    const latitude = Number(h['latitude']);
+    const longitude = Number(h['longitude']);
+    const radius = h['radiusMeters'] === undefined ? 150 : Number(h['radiusMeters']);
+    if (Number.isFinite(latitude) && Number.isFinite(longitude) && Math.abs(latitude) <= 90 && Math.abs(longitude) <= 180 && !(latitude === 0 && longitude === 0)) {
+      home = { latitude, longitude, radiusMeters: Number.isFinite(radius) ? Math.min(Math.max(radius, 50), 5000) : 150 };
+    } else {
+      warnings.push('"home" needs a valid latitude and longitude; the At Home sensor is off.');
+    }
+  }
+
   let autoLockMinutes: number | undefined;
   const autoLock = raw['autoLock'];
   if (typeof autoLock === 'object' && autoLock !== null && (autoLock as Record<string, unknown>)['enabled'] === true) {
@@ -165,6 +183,8 @@ export function parseConfig(raw: Record<string, unknown>): ConfigResult {
       graphqlApiKey: optString(raw['graphqlApiKey']),
       appVersion: optString(raw['appVersion']) ?? DEFAULT_APP_VERSION,
       debug: raw['debug'] === true,
+      vehicleName: optString(raw['vehicleName']),
+      home,
     },
   };
 }

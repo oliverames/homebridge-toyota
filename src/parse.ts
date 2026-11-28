@@ -209,6 +209,42 @@ export interface RemoteStatus {
   reportedAt?: string;
   /** The same moment in epoch milliseconds, when it parses to a plausible past time. */
   reportedAtMs?: number;
+  /** Where the vehicle was when it last reported its position (remote status `latitude`/`longitude`). */
+  location?: VehicleLocation;
+}
+
+export interface VehicleLocation {
+  latitude: number;
+  longitude: number;
+  /** `locationAcquisitionDatetime`, when given. */
+  reportedAt?: string;
+  reportedAtMs?: number;
+}
+
+/** Remote status carries the last position. 0,0 and out-of-range values are not positions. */
+export function parseLocation(data: unknown, now: number = Date.now()): VehicleLocation | undefined {
+  for (const root of [[], ['payload']]) {
+    const latitude = num(at(data, ...root, 'latitude'));
+    const longitude = num(at(data, ...root, 'longitude'));
+    if (latitude === undefined || longitude === undefined) {
+      continue;
+    }
+    if (Math.abs(latitude) > 90 || Math.abs(longitude) > 180 || (latitude === 0 && longitude === 0)) {
+      return undefined;
+    }
+    const acquired = at(data, ...root, 'locationAcquisitionDatetime');
+    return { latitude, longitude, ...(acquired === undefined ? {} : reportTime({ occurrenceDate: acquired }, now)) };
+  }
+  return undefined;
+}
+
+/** Great-circle distance in metres. */
+export function distanceMeters(a: { latitude: number; longitude: number }, b: { latitude: number; longitude: number }): number {
+  const rad = Math.PI / 180;
+  const dLat = (b.latitude - a.latitude) * rad;
+  const dLon = (b.longitude - a.longitude) * rad;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.latitude * rad) * Math.cos(b.latitude * rad) * Math.sin(dLon / 2) ** 2;
+  return 2 * 6_371_000 * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
 interface Section {
@@ -374,7 +410,8 @@ export function parseRemoteStatus(data: unknown): RemoteStatus {
       doorsLocked = true;
     }
   }
-  return { openings, doorsLocked, ...reportTime(data) };
+  const location = parseLocation(data);
+  return { openings, doorsLocked, ...reportTime(data), ...(location ? { location } : {}) };
 }
 
 const REPORT_TIME_ROOTS: string[][] = [[], ['payload'], ['status', 'payload'], ['vehicleStatusResponse', 'payload'], ['data']];

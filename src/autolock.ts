@@ -1,4 +1,4 @@
-import type { RemoteStatus, Telemetry } from './parse';
+import { distanceMeters, type RemoteStatus, type Telemetry, type VehicleLocation } from './parse';
 
 /**
  * Auto-lock, ported from RedLink's `ToyotaAutoLock`. Toyota exposes no key or
@@ -24,6 +24,12 @@ export const AUTO_LOCK = {
   episodeResetMs: 6 * 60 * 60 * 1000,
   /** Minimum spacing between fresh-report requests made for auto-lock. */
   wakeIntervalMs: 15 * 60 * 1000,
+  /**
+   * Without telemetry speed, the car counts as parked when a fresh position is
+   * within this distance of where the doors were first seen unlocked, after the
+   * dwell time. GPS jitter on a parked car stays well inside it.
+   */
+  parkedRadiusMeters: 50,
 } as const;
 
 export const DEFAULT_AUTO_LOCK_MINUTES = 10;
@@ -37,6 +43,8 @@ export interface AutoLockState {
   lastEvidenceWake?: number;
   /** The last unlock sent from HomeKit. */
   lastUserUnlock?: number;
+  /** Where the car was when the doors were first seen unlocked in this episode. */
+  unlockedAt?: { latitude: number; longitude: number };
 }
 
 export interface AutoLockStore {
@@ -72,6 +80,7 @@ export function decideAutoLock(state: AutoLockState, input: AutoLockInput): Auto
   if (status.doorsLocked === true) {
     // A locked car ends the episode.
     state.unlockedSince = undefined;
+    state.unlockedAt = undefined;
     state.lastAttempt = undefined;
     state.lastEvidenceWake = undefined;
     state.attempts = 0;
@@ -83,6 +92,10 @@ export function decideAutoLock(state: AutoLockState, input: AutoLockInput): Auto
   }
   const seenUnlockedAt = status.reportedAtMs ?? now;
   state.unlockedSince = Math.min(state.unlockedSince ?? seenUnlockedAt, seenUnlockedAt);
+  const location: VehicleLocation | undefined = status.location;
+  if (location && !state.unlockedAt) {
+    state.unlockedAt = { latitude: location.latitude, longitude: location.longitude };
+  }
 
   const lastActivity = Math.max(state.lastAttempt ?? 0, state.lastEvidenceWake ?? 0);
   if (lastActivity > 0 && now - lastActivity >= AUTO_LOCK.episodeResetMs) {
@@ -112,7 +125,10 @@ export function decideAutoLock(state: AutoLockState, input: AutoLockInput): Auto
   if (running === undefined) {
     return { action: 'none', reason: 'the engine state is unknown' };
   }
-  if (!fresh(status.reportedAtMs, now) || !fresh(telemetry?.reportedAtMs, now)) {
+  // Parked evidence: fresh zero-speed telemetry, or a fresh position that has not moved since the unlock.
+  const telemetryFresh = telemetry !== undefined && fresh(telemetry.reportedAtMs, now) ? telemetry : undefined;
+  const locationFresh = location !== undefined && fresh(location.reportedAtMs, now) ? location : undefined;
+  if (!fresh(status.reportedAtMs, now) || (!telemetryFresh && !locationFresh)) {
     if (state.evidenceWakes >= AUTO_LOCK.maxEvidenceWakes) {
       return { action: 'none', reason: 'fresh-report limit reached for this unlock' };
     }
@@ -121,12 +137,18 @@ export function decideAutoLock(state: AutoLockState, input: AutoLockInput): Auto
     }
     return { action: 'wake' };
   }
-  // Unattended, so an unknown movement state fails closed.
-  if (telemetry?.speed === undefined) {
-    return { action: 'none', reason: 'the vehicle does not report its speed' };
+  if (telemetryFresh?.speed !== undefined) {
+    return telemetryFresh.speed > 0.01 ? { action: 'none', reason: 'the vehicle is moving' } : { action: 'lock' };
   }
-  if (telemetry.speed > 0.01) {
-    return { action: 'none', reason: 'the vehicle is moving' };
+  // Unattended, so missing evidence fails closed.
+  if (!locationFresh || !state.unlockedAt) {
+    return { action: 'none', reason: 'the vehicle reports neither its speed nor a usable position' };
+  }
+  if (distanceMeters(locationFresh, state.unlockedAt) > AUTO_LOCK.parkedRadiusMeters) {
+    // It was driven since the unlock: start the episode over from here.
+    state.unlockedSince = seenUnlockedAt;
+    state.unlockedAt = { latitude: locationFresh.latitude, longitude: locationFresh.longitude };
+    return { action: 'none', reason: 'the vehicle has moved since it was unlocked' };
   }
   return { action: 'lock' };
 }

@@ -381,8 +381,18 @@ export class ToyotaClient {
     return session;
   }
 
-  /** One request, with a single refresh-and-retry on 401/403. */
-  async send(makeRoute: (session: Session) => Route, vin: string, generation: Generation): Promise<Envelope> {
+  /**
+   * One request, with a single refresh-and-retry on 401/403. Optional reads
+   * (`authRetry: false`) skip that: some endpoints answer a steady 403 for a
+   * vehicle or account (telemetry and location on a 21MM bZ, 2026-11-27), and
+   * treating that as a sign-in problem would force refreshes and, after three,
+   * blame the client key.
+   */
+  async send(makeRoute: (session: Session) => Route, vin: string, generation: Generation, options: { authRetry?: boolean } = {}): Promise<Envelope> {
+    if (options.authRetry === false) {
+      const session = await this.ensureSession();
+      return this.sendOnce(makeRoute(session), session, vin, generation);
+    }
     return this.withAuthRetry((session) => this.sendOnce(makeRoute(session), session, vin, generation));
   }
 

@@ -111,7 +111,7 @@ export class ToyotaVehicleApi implements VehicleApi {
   }
 
   async readTelemetry(vin: string, generation: Generation): Promise<Telemetry> {
-    return parseTelemetry((await this.client.send(() => routes.telemetry(generation), vin, generation)).data);
+    return parseTelemetry((await this.client.send(() => routes.telemetry(generation), vin, generation, { authRetry: false })).data);
   }
 
   async requestRefresh(vin: string, generation: Generation): Promise<void> {

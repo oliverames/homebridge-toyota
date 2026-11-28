@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.0 - 2026-11-27
+
+- `vehicleName` sets what HomeKit and Siri call the car ("Oliver’s Car"); every tile starts with it, so in a room of the same name the Home app shows plain "Doors", "Hatch Lock", "Front Doors". Toyota's generic sensor labels are clearer ("Front Doors", "Rear Doors", "Windows"), and the hatch lock is "Hatch Lock" so it no longer shares a name with the hatch sensor. The plugin remembers which names it set: changing `vehicleName` renames those, and a name set in the Home app is never touched.
+- At Home occupancy sensor (`home` latitude, longitude, radius). On while the car's last reported position is within the radius, for Home automations when the car arrives or leaves. The position comes from the status report the plugin already reads; coordinates are never logged.
+- A lock that fails (refused, or accepted but never confirmed, including an auto-lock attempt) shows the Doors as Jammed, the Home app's native alert, until the car reports them locked, a new lock or unlock is sent, or an hour passes.
+- Auto-lock works without telemetry. Toyota answers telemetry with HTTP 403 for a 21MM bZ (2026-11-27), so 0.4.x auto-lock could never confirm the car was parked. The car now also counts as parked when a fresh position is within 50 m of where the doors were first seen unlocked; a car that moved starts the episode over. Telemetry is still used where available and is parked for 12 hours after a refusal.
+- Optional reads (telemetry) no longer retry through a token refresh on 403. A steady permission 403 used to force refreshes and could, after three, wrongly warn that the client key was rotated.
+
 ## 0.4.3 - 2026-11-27
 
 - The EV charge level updates while charging. Toyota keeps it in a separate EV snapshot that the door refresh never touches, so on 2026-11-27 HomeKit stayed at the 7% the car reported when it was plugged in. While charging, the plugin now asks for a fresh EV snapshot (`v2/electric/realtime-status`, with RedLink's v1 fallback) once the snapshot is `chargingRefreshMinutes` old (default 30, minimum 15, `0` off), then reads it for about two minutes. Every door refresh also refreshes the EV snapshot, best effort.

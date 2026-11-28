@@ -108,6 +108,8 @@ Set `remoteStart.prepare` to `false` to start immediately instead. Toyota allows
 | `vin` | No | all vehicles | Expose only this VIN. |
 | `generation` | No | reported by Toyota, else `21MM` | `17CY`, `17CYPLUS`, `21MM` or `24MM`. |
 | `pollIntervalMinutes` | No | `5` | Minimum 5. Backs off automatically on errors. |
+| `vehicleName` | No | Toyota nickname | What HomeKit and Siri call the car, for example `Oliver’s Car`. Every tile name starts with it; names changed in the Home app are kept. |
+| `home` | No | none | `latitude`, `longitude` and `radiusMeters` (default 150) for an At Home occupancy sensor driven by the car's reported position. |
 | `debug` | No | `false` | Show the plugin's detailed log lines (every request with status and timing, token refreshes, a summary after each update) in the normal log, marked `[debug]`. |
 | `autoLock.enabled` | No | `false` | Lock the doors when they have been reported unlocked for `autoLock.afterMinutes` (default 10) with the car parked, closed and idle. See the design notes for its limits. |
 | `chargingRefreshMinutes` | No | `30` | While charging, ask the car for a fresh charge level this often. Minimum 15; `0` turns it off. |

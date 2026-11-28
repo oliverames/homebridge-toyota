@@ -39,6 +39,16 @@ Every service carries the vehicle's name (Toyota nickname, else the accessory na
 
 HomeKit shows No Response (`SERVICE_COMMUNICATION_FAILURE`) in two cases only: while sign-in needs attention (a `fatal` poll outcome), and on a cached accessory before the first vehicle list, where writes would otherwise be accepted with no handler behind them. Ordinary outages keep last-known values, and the 12-hour freshness rule marks locks Unknown and contact sensors with `StatusFault`.
 
+### Location, At Home and Jammed (0.5.0)
+
+Remote status carries `latitude`, `longitude` and `locationAcquisitionDatetime`; `v1/location` and `v3/telemetry` answer 403 for the 21MM bZ (2026-11-27), so the position comes from the status read the plugin already makes. With `home` configured, an `OccupancySensor` ("At Home") is detected while the last position is within `radiusMeters` (default 150) of home, which makes arrival and departure usable in Home automations. Departure shows only when the car next reports a position, typically when it is parked elsewhere. Coordinates never appear in logs.
+
+Auto-lock's parked evidence is fresh zero-speed telemetry where available, otherwise a fresh position within 50 m of where the doors were first seen unlocked, after the dwell time; a car that has moved starts the episode over. Toyota's own `VEHICLE_MOVING` refusal remains the last guard.
+
+A lock attempt that fails sets `LockCurrentState` to `JAMMED`, which the Home app surfaces as an alert, and keeps it until a locked report, a new lock or unlock request, or one hour. A refusal because another command is running does not.
+
+Room assignment and grouping are HomeKit-side: put the accessory in a room with the vehicle's name and the Home app drops the shared prefix from tile names.
+
 ### Logging (0.4.2)
 
 Info level, always on: the startup settings summary (no credentials), the first report's openings, every lock state change with the car's report time, each opening opened or closed, charging started or stopped, the engine or climate turning on or off, every HomeKit request ("HomeKit asked to lock the doors"), each command's acceptance and confirmation time, fresh-report requests and their result, auto-lock attempts, full sign-ins, a sign-in picked up from the settings page, and outage start and recovery.
@@ -54,7 +64,7 @@ No line carries a password, client key, token, guid, device id, email or full VI
 - **Switches for hazards, horn, headlights, charging start/stop, sunroof and windows.** Momentary actions and commands with no state HomeKit models. They would be fake accessories. RedLink and Shortcuts cover them.
 - **A hatch lock with no readable state.** Since 0.3.7 a Hatch `LockMechanism` appears only when the vehicle has the remote hatch command (`trunkLockUnlockCapable`, gated like the preparation steps) and a report actually carries a hatch lock value; it sends `trunk-lock` and `trunk-unlock` and is confirmed from status like the doors. Without a reported value the hatch stays position only, as RedLink treats it.
 - **`GarageDoorOpener` for the trunk.** Wrong semantics and a Siri safety prompt for the wrong thing.
-- **`OccupancySensor` or presence for "driving" or "parked".** Toyota does not report occupancy. Driving is inferred from speed telemetry, which this plugin does not poll.
+- **`OccupancySensor` for "driving" or "occupied".** Toyota does not report occupancy or ignition. The one occupancy sensor is At Home (0.5.0), from the reported position, which is real data.
 - **Location, odometer, tire pressure, trips, health, service history.** No HomeKit type exists, and polling the extra endpoints costs rate limit for nothing.
 - **A `SecuritySystem` or `Doorbell` for alerts.** Not a fit.
 - **Exposing vehicle-wake (`refresh-status`) as a button, or waking on a fixed timer.** The plugin wakes the car only when its last report is stale, at most once per interval. See "Polling".

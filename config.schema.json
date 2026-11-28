@@ -14,6 +14,12 @@
         "default": "Toyota",
         "required": true
       },
+      "vehicleName": {
+        "title": "Name in HomeKit",
+        "description": "What HomeKit and Siri call the car, for example Oliver’s Car. Every tile starts with it (Oliver’s Car Doors). Leave empty to use the Toyota nickname. Names you change in the Home app are kept.",
+        "type": "string",
+        "placeholder": "Oliver’s Car"
+      },
       "username": {
         "title": "Toyota account email",
         "type": "string",
@@ -98,6 +104,16 @@
           }
         }
       },
+      "home": {
+        "title": "Home location (At Home sensor)",
+        "type": "object",
+        "description": "Adds an occupancy sensor that is on while the car's last reported position is within the radius of home. Useful for Home automations when the car arrives or leaves.",
+        "properties": {
+          "latitude": { "title": "Latitude", "type": "number", "minimum": -90, "maximum": 90 },
+          "longitude": { "title": "Longitude", "type": "number", "minimum": -180, "maximum": 180 },
+          "radiusMeters": { "title": "Radius (metres)", "type": "number", "default": 150, "minimum": 50, "maximum": 5000 }
+        }
+      },
       "exposeOpenings": {
         "title": "Door, window, trunk and hood contact sensors",
         "description": "One native contact sensor per opening the vehicle reports.",
@@ -149,6 +165,7 @@
   },
   "layout": [
     "name",
+    "vehicleName",
     "username",
     "password",
     "apiKey",
@@ -156,7 +173,7 @@
     {
       "type": "fieldset",
       "title": "Features",
-      "items": ["exposeOpenings", "exposeBattery", "remoteStart.enabled", "remoteStart.prepare", "autoLock.enabled", "autoLock.afterMinutes"]
+      "items": ["exposeOpenings", "exposeBattery", "remoteStart.enabled", "remoteStart.prepare", "autoLock.enabled", "autoLock.afterMinutes", "home.latitude", "home.longitude", "home.radiusMeters"]
     },
     {
       "type": "fieldset",

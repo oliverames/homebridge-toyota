@@ -234,7 +234,7 @@ export class ToyotaPlatform implements DynamicPlatformPlugin {
     const uuid = this.api.hap.uuid.generate(`toyota:${vehicle.vin.toUpperCase()}`);
     let accessory = this.cached.get(uuid);
     if (!accessory) {
-      accessory = new this.api.platformAccessory(vehicle.displayName, uuid);
+      accessory = new this.api.platformAccessory(config.vehicleName ?? vehicle.displayName, uuid);
       this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
       this.cached.set(uuid, accessory);
       this.log.info(`Added ${vehicle.displayName} (${mask(vehicle.vin)}).`);
@@ -252,6 +252,8 @@ export class ToyotaPlatform implements DynamicPlatformPlugin {
       exposeBattery: config.exposeBattery,
       remoteStart: config.remoteStartEnabled,
       hatchLock: capabilities.lockTrunk,
+      name: config.vehicleName,
+      home: config.home,
     };
     const view = new VehicleAccessory(this.api, this.log, accessory, vehicle, options);
     const controller = new VehicleController(
@@ -316,6 +318,12 @@ export function describeSettings(config: ToyotaConfig): string {
   }
   if (config.vin) {
     parts.push(`one vehicle (…${config.vin.slice(-4)})`);
+  }
+  if (config.home) {
+    parts.push(`At Home sensor within ${config.home.radiusMeters} m`);
+  }
+  if (config.vehicleName) {
+    parts.push(`named "${config.vehicleName}"`);
   }
   if (config.debug) {
     parts.push('debug logging on');

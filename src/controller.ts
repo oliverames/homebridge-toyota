@@ -103,6 +103,8 @@ export class VehicleController {
   private refreshUnsupported = false;
   private waking = false;
   private lastEvWake?: number;
+  /** Telemetry answers a steady 403 for some vehicles (a 21MM bZ, 2026-11-27); park it like the EV endpoint. */
+  private telemetryParkedUntil = 0;
   private evRefreshUnsupported = false;
   private interestWakes: number[] = [];
   private autoLockState?: AutoLockState;
@@ -427,10 +429,17 @@ export class VehicleController {
       let telemetry;
       let running = this.state.running;
       if (status.doorsLocked === false) {
-        try {
-          telemetry = await this.api.readTelemetry(this.vin, this.generation);
-        } catch (error) {
-          this.log.debug(`Telemetry read for auto-lock failed: ${describe(error)}`);
+        if (this.now() >= this.telemetryParkedUntil) {
+          try {
+            telemetry = await this.api.readTelemetry(this.vin, this.generation);
+          } catch (error) {
+            if (endpointRefusal(error) !== undefined) {
+              this.telemetryParkedUntil = this.now() + PARK_MS;
+              this.log.debug(`Telemetry is not available for this vehicle (${describe(error)}); auto-lock uses the reported position instead, and telemetry is not asked again for 12 hours.`);
+            } else {
+              this.log.debug(`Telemetry read for auto-lock failed: ${describe(error)}`);
+            }
+          }
         }
         if (running === undefined) {
           try {
