@@ -1,5 +1,15 @@
 # Worklog
 
+## 2026-11-27 - 0.4.3: charge level while charging
+
+**What changed**: Oliver noticed HomeKit stuck at 7% though the bZ had been charging for hours. The EV charge level is a separate Toyota snapshot (`v3/electric/status`, time in `vehicleInfo.acquisitionDatetime`) that `refresh-status` never updates. 0.4.3 ports RedLink's `electricRefresh` (`POST v2/electric/realtime-status` with `device-id`, v1 fallback): every 30 min while charging (`chargingRefreshMinutes`), and best effort alongside every door wake.
+
+**Verified**: 200 tests, full typecheck (tests included), lint and build pass locally. Live at 19:20: the EV snapshot was 7.4 hours old at 7%; the refresh was accepted and the car answered in 21 s with 93%, charging (2026-11-28T00:20:12Z).
+
+**Left off at**: 0.4.3 running on home-server. The earlier "check 7%" item is resolved (it was stale, not a parse bug). Still open: PS5 pairing in Oliver's terminal tab; the UDM 3 AM window.
+
+---
+
 ## 2026-11-27 - 0.4.2 logging; config was never reaching the plugin
 
 **What changed**: 0.4.2 adds logging across sign-in, every request (status, duration, network failure kind), token refreshes with remaining lifetime, a per-update summary, HomeKit requests, opening, charging and engine changes, command confirmation times and scheduler decisions, plus a `debug` setting that shows debug lines at info marked `[debug]`. `test/logging.test.ts` checks a refresh, reads, a command and a refused request for leaked secrets. Deploying it exposed that child-bridge restarts reuse the parent homebridge process's config from 11/14, so `autoLock` (since 0.4.0) and `debug` had never been active. With Oliver's go-ahead the main homebridge process was restarted at 18:36.
